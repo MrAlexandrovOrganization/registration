@@ -1,0 +1,87 @@
+name: registration
+services:
+  postgres:
+    image: postgres:${POSTGRES_VERSION:?Run via make}
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: registration
+      POSTGRES_USER: registration
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?required}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - '127.0.0.1:55432:5432'
+    networks: [database]
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U registration -d registration']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    logging: &logging
+      driver: json-file
+      options: {max-size: 10m, max-file: '3'}
+    mem_limit: 512m
+    cpus: 1.0
+  backend:
+    build:
+      context: .
+      args:
+        GO_VERSION: ${GO_VERSION:?Run via make}
+        GO_ALPINE_VERSION: ${GO_ALPINE_VERSION:?Run via make}
+        ALPINE_VERSION: ${ALPINE_VERSION:?Run via make}
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://registration:${POSTGRES_PASSWORD:?required}@postgres:5432/registration?sslmode=disable
+      BACKEND_TOKEN: ${BACKEND_TOKEN:?required}
+      ROOT_ID: ${ROOT_ID:?required}
+      BOT_ID: ${BOT_ID:?required}
+      ALLOW_INSECURE_GRPC: 'true'
+      GRPC_LISTEN: ':50051'
+      HTTP_LISTEN: ':9090'
+      KAFKA_BROKERS: kafka:9092
+      KAFKA_TOPIC_PREFIX: registration.telegram
+      MILESTONES: '25,50,100,150,200'
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4317
+      OTEL_EXPORTER_OTLP_INSECURE: 'true'
+    depends_on:
+      postgres: {condition: service_healthy}
+    networks:
+      database:
+      api:
+        aliases: [registration-backend]
+      kafka:
+      jaeger:
+      prometheus:
+        aliases: [registration-backend]
+    ports:
+      - '127.0.0.1:50051:50051'
+      - '127.0.0.1:9090:9090'
+    healthcheck:
+      test: [CMD, wget, -q, -O, /dev/null, 'http://127.0.0.1:9090/livez']
+      interval: 15s
+      timeout: 3s
+      retries: 3
+    stop_grace_period: 30s
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    logging: *logging
+    mem_limit: 512m
+    cpus: 1.0
+networks:
+  database:
+    internal: true
+  api:
+    name: registration-api
+  kafka:
+    external: true
+    name: kafka-net
+  jaeger:
+    external: true
+    name: jaeger-net
+  prometheus:
+    external: true
+    name: prometheus-net
+volumes:
+  postgres_data:

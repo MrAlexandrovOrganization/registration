@@ -1,0 +1,35 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - id: versions
+        run: make -s versions >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ steps.versions.outputs.PYTHON_VERSION }}
+      - uses: arduino/setup-protoc@v3
+        with:
+          version: ${{ steps.versions.outputs.PROTOC_VERSION }}
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - run: make install
+      - run: make check
+      - run: make test-race
+      - run: make build
+      - run: make compose-build
+        env:
+          POSTGRES_PASSWORD: synthetic-fixture-password
+          BACKEND_TOKEN: synthetic-fixture-backend-token-at-least-32
+          BOT_ID: '1000'
+          ROOT_ID: '1001'

@@ -1,0 +1,6 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Generated files and local development tools"
+paths = ['''(^|/)\.tools/''', '''(^|/)\.bin/''', '''\.pb\.go$''', '''go\.sum$''']

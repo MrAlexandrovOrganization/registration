@@ -1,0 +1,25 @@
+repos:
+  - repo: local
+    hooks:
+      - id: goimports
+        name: Go formatting and imports
+        language: system
+        entry: .bin/goimports -w
+        types: [go]
+        exclude: '^api/.*\.pb\.go$'
+      - id: ruff-check
+        name: Python safe fixes
+        language: system
+        entry: .tools/bin/ruff check --fix
+        types: [python]
+      - id: ruff-format
+        name: Python formatting
+        language: system
+        entry: .tools/bin/ruff format
+        types: [python]
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-merge-conflict
+      - id: detect-private-key
+      - id: check-added-large-files

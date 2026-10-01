@@ -1,0 +1,9 @@
+.git
+.env*
+.bin
+.tools
+**/*_test.go
+*.sqlite*
+*.dump
+*.xlsx
+**/*.pb.go

@@ -1,0 +1,72 @@
+package domain
+
+import (
+	"errors"
+	"regexp"
+	"slices"
+	"strings"
+	"time"
+	"unicode/utf8"
+)
+
+var Fields = []string{"name", "birth_date", "group", "phone", "expectations", "will_drive", "trip_attendance"}
+var Options = map[string][]string{
+	"will_drive":      {"Обязательно! 🤩", "Пока думаю 🤔", "Не смогу 😢"},
+	"trip_attendance": {"Да, точно еду! ✅", "Нет, не смогу 😢"},
+}
+var phone = regexp.MustCompile(`^\+?[0-9 ()-]+$`)
+var digits = regexp.MustCompile(`\D`)
+
+func Normalize(field, value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" || utf8.RuneCountInString(value) > 500 {
+		return "", errors.New("invalid_value")
+	}
+	switch field {
+	case "name":
+		if utf8.RuneCountInString(value) > 150 {
+			return "", errors.New("invalid_value")
+		}
+	case "birth_date":
+		date, err := time.Parse("02.01.2006", value)
+		if err != nil || date.After(time.Now()) || date.Year() < 1900 {
+			return "", errors.New("invalid_date")
+		}
+		value = date.Format("02.01.2006")
+	case "phone":
+		if !phone.MatchString(value) {
+			return "", errors.New("invalid_phone")
+		}
+		value = digits.ReplaceAllString(value, "")
+		if len(value) == 11 && value[0] == '8' {
+			value = "7" + value[1:]
+		}
+		if len(value) < 10 || len(value) > 15 {
+			return "", errors.New("invalid_phone")
+		}
+	case "group":
+		if utf8.RuneCountInString(value) > 80 {
+			return "", errors.New("invalid_value")
+		}
+		value = strings.ToUpper(value)
+	case "expectations":
+	case "will_drive", "trip_attendance":
+		if slices.Contains(Options[field], value) {
+			return value, nil
+		}
+		return "", errors.New("invalid_option")
+	default:
+		return "", errors.New("unknown_field")
+	}
+	return value, nil
+}
+
+// Next also asks for invalid legacy values; a nonempty invalid value is never accepted silently.
+func Next(values map[string]string) string {
+	for _, field := range Fields {
+		if _, err := Normalize(field, values[field]); err != nil {
+			return field
+		}
+	}
+	return "confirm"
+}

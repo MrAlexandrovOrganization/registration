@@ -1,0 +1,12 @@
+.env
+.env.*
+!.env.example
+.bin/
+.tools/
+.DS_Store
+*.sqlite*
+*.dump
+*.xlsx
+coverage.out
+__pycache__/
+*.pb.go
