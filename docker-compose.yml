@@ -36,8 +36,8 @@ services:
       ROOT_ID: ${ROOT_ID:?required}
       BOT_ID: ${BOT_ID:?required}
       ALLOW_INSECURE_GRPC: 'true'
-      GRPC_LISTEN: ':50051'
-      HTTP_LISTEN: ':9090'
+      GRPC_LISTEN: ':50052'
+      HTTP_LISTEN: ':9095'
       KAFKA_BROKERS: kafka:9092
       KAFKA_TOPIC_PREFIX: registration.telegram
       MILESTONES: '25,50,100,150,200'
@@ -54,10 +54,10 @@ services:
       prometheus:
         aliases: [registration-backend]
     ports:
-      - '127.0.0.1:50051:50051'
-      - '127.0.0.1:9090:9090'
+      - '127.0.0.1:50052:50052'
+      - '127.0.0.1:9095:9095'
     healthcheck:
-      test: [CMD, wget, -q, -O, /dev/null, 'http://127.0.0.1:9090/livez']
+      test: [CMD, wget, -q, -O, /dev/null, 'http://127.0.0.1:9095/livez']
       interval: 15s
       timeout: 3s
       retries: 3
