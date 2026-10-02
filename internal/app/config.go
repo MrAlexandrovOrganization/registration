@@ -12,6 +12,7 @@ type Config struct {
 	Brokers                                                []string
 	RootID, BotID                                          int64
 	Milestones                                             []int
+	ParticipationEnabled                                   bool
 }
 
 func env(key, fallback string) string {
@@ -23,6 +24,10 @@ func env(key, fallback string) string {
 func Load() (Config, error) {
 	c := Config{DSN: os.Getenv("DATABASE_URL"), Token: os.Getenv("BACKEND_TOKEN"), Listen: env("GRPC_LISTEN", ":50051"), HTTP: env("HTTP_LISTEN", ":9090"), TopicPrefix: env("KAFKA_TOPIC_PREFIX", "registration.telegram"), TLSCert: os.Getenv("GRPC_TLS_CERT"), TLSKey: os.Getenv("GRPC_TLS_KEY"), Brokers: strings.Split(env("KAFKA_BROKERS", "kafka:9092"), ",")}
 	var err error
+	c.ParticipationEnabled, err = strconv.ParseBool(env("PARTICIPATION_ENABLED", "false"))
+	if err != nil {
+		return c, errors.New("invalid PARTICIPATION_ENABLED")
+	}
 	c.RootID, err = strconv.ParseInt(os.Getenv("ROOT_ID"), 10, 64)
 	if err != nil || c.RootID <= 0 {
 		return c, errors.New("ROOT_ID must be a positive integer")

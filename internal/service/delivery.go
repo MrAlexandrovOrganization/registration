@@ -5,6 +5,7 @@ import (
 	"errors"
 	"math/rand/v2"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -52,12 +53,47 @@ func (s *Service) Claim(ctx context.Context, r *pb.ClaimRequest) (*pb.Delivery, 
 			if err = protojson.Unmarshal(body, d.View); err != nil {
 				return nil, status.Error(codes.Internal, "invalid persisted view")
 			}
+			if !s.ParticipationEnabled && d.Kind == "view" {
+				d.View = registrationOnlyView(d.View)
+			}
 		}
 	}
 	if err = tx.Commit(ctx); err != nil {
 		return nil, internal(err)
 	}
 	return d, nil
+}
+
+// Apply the current visibility policy even to views queued before the switch.
+func registrationOnlyView(v *pb.View) *pb.View {
+	if v.Kind == "poll" || v.Kind == "milestone" || v.Field == "will_drive" || v.Field == "trip_attendance" {
+		return &pb.View{Kind: "notice", Code: "stale"}
+	}
+	if v.Kind == "help" {
+		v.Code = "help_registration"
+	}
+	if v.Kind == "stats" && len(v.Numbers) == 8 {
+		v.Fields = nil
+		for _, i := range []int{0, 1, 2, 7} {
+			v.Fields = append(v.Fields, &pb.Field{Key: "stats_" + strconv.Itoa(i), Value: strconv.FormatInt(v.Numbers[i], 10)})
+		}
+		v.Numbers = nil
+	}
+	fields := v.Fields[:0]
+	for _, f := range v.Fields {
+		if f.Key != "will_drive" && f.Key != "trip_attendance" {
+			fields = append(fields, f)
+		}
+	}
+	v.Fields = fields
+	buttons := v.Buttons[:0]
+	for _, b := range v.Buttons {
+		if !strings.HasPrefix(b.LabelKey, "will_drive") && !strings.HasPrefix(b.LabelKey, "trip_attendance") {
+			buttons = append(buttons, b)
+		}
+	}
+	v.Buttons = buttons
+	return v
 }
 
 // RetryPolicy separates rate-limit waiting from failed delivery attempts.
@@ -177,7 +213,14 @@ func (s *Service) Export(ctx context.Context, r *pb.ExportRequest) (*pb.ExportRe
 	defer file.Close()
 	headers := []string{"telegram_id", "state", "username", "telegram_sername", "name", "birth_date", "group", "phone", "expectations", "will_drive", "trip_attendance", "is_staff", "is_counselor", "is_blocked", "first_start_source", "first_start_status", "first_start_at_utc"}
 	for i, h := range headers {
-		cell, _ := excelize.CoordinatesToCellName(i+1, 1)
+		if !s.ParticipationEnabled && (i == 9 || i == 10) {
+			continue
+		}
+		col := i + 1
+		if !s.ParticipationEnabled && i > 10 {
+			col -= 2
+		}
+		cell, _ := excelize.CoordinatesToCellName(col, 1)
 		if err = file.SetCellStr("Sheet1", cell, h); err != nil {
 			return nil, internal(err)
 		}
@@ -192,6 +235,9 @@ func (s *Service) Export(ctx context.Context, r *pb.ExportRequest) (*pb.ExportRe
 			return nil, internal(err)
 		}
 		for i, v := range values {
+			if !s.ParticipationEnabled && (i == 9 || i == 10) {
+				continue
+			}
 			text := ""
 			switch value := v.(type) {
 			case string:
@@ -201,7 +247,11 @@ func (s *Service) Export(ctx context.Context, r *pb.ExportRequest) (*pb.ExportRe
 			case int32:
 				text = strconv.FormatInt(int64(value), 10)
 			}
-			cell, _ := excelize.CoordinatesToCellName(i+1, n)
+			col := i + 1
+			if !s.ParticipationEnabled && i > 10 {
+				col -= 2
+			}
+			cell, _ := excelize.CoordinatesToCellName(col, n)
 			// SetCellStr, rather than formula-aware inference, prevents spreadsheet formula injection.
 			if err = file.SetCellStr("Sheet1", cell, text); err != nil {
 				return nil, internal(err)

@@ -41,6 +41,7 @@ services:
       KAFKA_BROKERS: kafka:9092
       KAFKA_TOPIC_PREFIX: registration.telegram
       MILESTONES: '25,50,100,150,200'
+      PARTICIPATION_ENABLED: 'false'
       OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4317
       OTEL_EXPORTER_OTLP_INSECURE: 'true'
     depends_on:

@@ -48,7 +48,7 @@ func Serve(ctx context.Context, c Config) error {
 	if err = store.CheckSchema(ctx, db); err != nil {
 		return err
 	}
-	svc := &service.Service{DB: db, RootID: c.RootID, BotID: c.BotID, Milestones: c.Milestones}
+	svc := &service.Service{DB: db, RootID: c.RootID, BotID: c.BotID, Milestones: c.Milestones, ParticipationEnabled: c.ParticipationEnabled}
 	registry := prometheus.NewRegistry()
 	registry.MustRegister(prometheus.NewGoCollector(), prometheus.NewProcessCollector(prometheus.ProcessCollectorOpts{}))
 	calls := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "registration_rpc_total", Help: "RPC results"}, []string{"method", "code"})

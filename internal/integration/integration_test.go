@@ -24,6 +24,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
+	"google.golang.org/protobuf/encoding/protojson"
 	pb "registration.local/backend/api"
 	"registration.local/backend/internal/app"
 	"registration.local/backend/internal/legacy"
@@ -34,6 +35,97 @@ import (
 
 //go:embed fixture.sql
 var fixture string
+
+func TestParticipationDisabled(t *testing.T) {
+	ctx := t.Context()
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg, err := pgxpool.ParseConfig(os.Getenv("TEST_DATABASE_URL"))
+	must(err)
+	if cfg.ConnConfig.Database != "registration_test" {
+		t.Fatal("requires disposable registration_test")
+	}
+	bootstrap, err := pgxpool.NewWithConfig(ctx, cfg)
+	must(err)
+	defer bootstrap.Close()
+	_, err = bootstrap.Exec(ctx, "CREATE SCHEMA participation_test")
+	must(err)
+	cfg.ConnConfig.RuntimeParams["search_path"] = "participation_test"
+	db, err := pgxpool.NewWithConfig(ctx, cfg)
+	must(err)
+	defer db.Close()
+	must(store.Migrate(ctx, db))
+	_, err = db.Exec(ctx, `INSERT INTO users(telegram_id,state,name,birth_date,"group",phone,expectations,will_drive,trip_attendance) VALUES(42,'will_drive','Fixture','01.01.2000','TEST','79991234567','test','Пока думаю 🤔','Нет, не смогу 😢')`)
+	must(err)
+	svc := &service.Service{DB: db, RootID: 101, BotID: 1000, Milestones: []int{1}}
+	seq := int64(1)
+	send := func(actor int64, text, callback string) *pb.View {
+		t.Helper()
+		_, err := svc.Accept(ctx, &pb.Update{Id: seq, Actor: actor, Chat: actor, ChatType: "private", Text: text, Callback: callback})
+		seq++
+		must(err)
+		var body []byte
+		must(db.QueryRow(ctx, "SELECT body FROM outbound_messages WHERE chat=$1 ORDER BY id DESC LIMIT 1", actor).Scan(&body))
+		v := &pb.View{}
+		must(protojson.Unmarshal(body, v))
+		return v
+	}
+	v := send(42, "/start", "")
+	if v.Kind != "confirm" || len(v.Fields) != 5 {
+		t.Fatal("hidden state did not resume shortened form")
+	}
+	for _, f := range v.Fields {
+		if f.Key == "will_drive" || f.Key == "trip_attendance" {
+			t.Fatal("hidden answer leaked")
+		}
+	}
+	var version int64
+	must(db.QueryRow(ctx, "SELECT version FROM users WHERE telegram_id=42").Scan(&version))
+	if send(42, "", "c:"+strconv.FormatInt(version, 10)+":confirm").Kind != "registered" {
+		t.Fatal("confirmation failed")
+	}
+	send(42, "", "p:0")
+	var going, attendance string
+	must(db.QueryRow(ctx, "SELECT will_drive,trip_attendance FROM users WHERE telegram_id=42").Scan(&going, &attendance))
+	if going != "Пока думаю 🤔" || attendance != "Нет, не смогу 😢" {
+		t.Fatal("hidden answers overwritten")
+	}
+	v = send(101, "/stats", "")
+	if len(v.Numbers) != 0 || len(v.Fields) != 4 {
+		t.Fatal("participation stats exposed")
+	}
+	send(101, "/poll all", "")
+	var count int
+	must(db.QueryRow(ctx, "SELECT count(*) FROM broadcasts").Scan(&count))
+	if count != 0 {
+		t.Fatal("disabled poll created")
+	}
+	exported, err := svc.Export(ctx, &pb.ExportRequest{Actor: 101})
+	must(err)
+	xlsx, err := excelize.OpenReader(bytes.NewReader(exported.Xlsx))
+	must(err)
+	defer xlsx.Close()
+	rows, err := xlsx.GetRows("Sheet1")
+	must(err)
+	for _, header := range rows[0] {
+		if header == "will_drive" || header == "trip_attendance" {
+			t.Fatal("hidden export column")
+		}
+	}
+	if len(rows[0]) != 15 {
+		t.Fatal("wrong export column count")
+	}
+	_, err = db.Exec(ctx, `UPDATE users SET state='new',will_drive=NULL,trip_attendance=NULL WHERE telegram_id=42`)
+	must(err)
+	svc.ParticipationEnabled = true
+	if send(42, "/start", "").Field != "will_drive" {
+		t.Fatal("reenabling questions failed")
+	}
+}
 
 func TestSystem(t *testing.T) {
 	ctx := context.Background()
@@ -99,7 +191,7 @@ func TestSystem(t *testing.T) {
 	if _, err = legacy.Apply(ctx, db, snapshot); err == nil {
 		t.Fatal("nonempty destination overwritten")
 	}
-	svc := &service.Service{DB: db, BotID: 1000, RootID: 101, Milestones: []int{1}}
+	svc := &service.Service{DB: db, BotID: 1000, RootID: 101, Milestones: []int{1}, ParticipationEnabled: true}
 	// Exercise the actual protobuf and authentication boundary, not just direct method calls.
 	listener := bufconn.Listen(1 << 20)
 	server := grpc.NewServer(grpc.UnaryInterceptor(app.Auth(strings.Repeat("x", 32))))

@@ -216,11 +216,11 @@ func TestFirstStarts(t *testing.T) {
 	defer file.Close()
 	rows, err := file.GetRows("Sheet1")
 	must(err)
-	if rows[0][14] != "first_start_source" {
+	if rows[0][12] != "first_start_source" {
 		t.Fatal("missing export source header")
 	}
 	for _, row := range rows[1:] {
-		if row[0] == "20" && (row[14] != tag || row[15] != "tagged" || len(row) != 17) {
+		if row[0] == "20" && (row[12] != tag || row[13] != "tagged" || len(row) != 15) {
 			t.Fatal("wrong exported source", row)
 		}
 	}

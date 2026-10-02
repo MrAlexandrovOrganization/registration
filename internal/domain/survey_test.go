@@ -33,3 +33,16 @@ func TestNextDoesNotAcceptMissingOrInvalid(t *testing.T) {
 		t.Fatal("missing group skipped")
 	}
 }
+
+func TestRegistrationWithoutParticipation(t *testing.T) {
+	values := map[string]string{"name": "Fixture User", "birth_date": "01.01.2000", "group": "test", "phone": "79991234567", "expectations": "test"}
+	if NextRegistration(values, false) != "confirm" {
+		t.Fatal("disabled questions still required")
+	}
+	if NextRegistration(values, true) != "will_drive" {
+		t.Fatal("enabling participation lost questions")
+	}
+	if len(Fields) != 7 {
+		t.Fatal("SQL column order changed")
+	}
+}

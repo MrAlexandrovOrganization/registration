@@ -24,9 +24,14 @@ import (
 
 type Service struct {
 	pb.UnimplementedRegistrationServer
-	DB            *pgxpool.Pool
-	BotID, RootID int64
-	Milestones    []int
+	DB                   *pgxpool.Pool
+	BotID, RootID        int64
+	Milestones           []int
+	ParticipationEnabled bool
+}
+
+func (s *Service) next(values map[string]string) string {
+	return domain.NextRegistration(values, s.ParticipationEnabled)
 }
 
 func internal(err error) error {
@@ -146,7 +151,7 @@ func (s *Service) view(u user) *pb.View {
 	switch u.state {
 	case "registered", "confirm":
 		v.Kind = u.state
-		for _, f := range domain.Fields {
+		for _, f := range domain.RegistrationFields(s.ParticipationEnabled) {
 			v.Fields = append(v.Fields, &pb.Field{Key: f, Value: u.values[f]})
 		}
 		if u.state == "confirm" {
@@ -155,7 +160,7 @@ func (s *Service) view(u user) *pb.View {
 		v.Buttons = append(v.Buttons, s.button(u.version, "edit", "edit"))
 	case "edit":
 		v.Kind = "edit"
-		for _, f := range domain.Fields {
+		for _, f := range domain.RegistrationFields(s.ParticipationEnabled) {
 			v.Buttons = append(v.Buttons, s.button(u.version, "edit_"+f, f))
 		}
 		v.Buttons = append(v.Buttons, s.button(u.version, "cancel", "cancel"))
@@ -195,7 +200,7 @@ func (s *Service) private(ctx context.Context, tx pgx.Tx, in *pb.Update) error {
 			return reply(&pb.View{Kind: "notice", Code: "denied"})
 		}
 		if in.Text == "/cancel" {
-			u.state = domain.Next(u.values)
+			u.state = s.next(u.values)
 			if err = saveUser(ctx, tx, in.Actor, &u); err != nil {
 				return err
 			}
@@ -212,7 +217,7 @@ func (s *Service) private(ctx context.Context, tx pgx.Tx, in *pb.Update) error {
 		if err = tx.QueryRow(ctx, store.Q("audience_count"), audience).Scan(&count); err != nil {
 			return err
 		}
-		u.state = domain.Next(u.values)
+		u.state = s.next(u.values)
 		if err = saveUser(ctx, tx, in.Actor, &u); err != nil {
 			return err
 		}
@@ -222,6 +227,9 @@ func (s *Service) private(ctx context.Context, tx pgx.Tx, in *pb.Update) error {
 		return reply(&pb.View{Kind: "broadcast_preview", Numbers: []int64{id, count}})
 	}
 	if strings.HasPrefix(in.Callback, "p:") {
+		if !s.ParticipationEnabled {
+			return reply(&pb.View{Kind: "notice", Code: "stale"})
+		}
 		parts := strings.Split(in.Callback, ":")
 		if len(parts) != 2 || (parts[1] != "0" && parts[1] != "1") {
 			return reply(&pb.View{Kind: "notice", Code: "stale"})
@@ -234,6 +242,14 @@ func (s *Service) private(ctx context.Context, tx pgx.Tx, in *pb.Update) error {
 		return reply(&pb.View{Kind: "notice", Code: "poll_saved"})
 	}
 	action := ""
+	field := strings.TrimPrefix(u.state, "edit_")
+	if !s.ParticipationEnabled && (field == "will_drive" || field == "trip_attendance") {
+		u.state = s.next(u.values)
+		if err = saveUser(ctx, tx, in.Actor, &u); err != nil {
+			return err
+		}
+		return reply(s.view(u))
+	}
 	if in.Callback != "" {
 		parts := strings.Split(in.Callback, ":")
 		if len(parts) != 3 || parts[0] != "c" || parts[1] != strconv.FormatInt(u.version, 10) {
@@ -243,16 +259,16 @@ func (s *Service) private(ctx context.Context, tx pgx.Tx, in *pb.Update) error {
 	}
 	switch {
 	case isStart || in.Text == "/cancel" || u.state == "new":
-		if u.state != "registered" || domain.Next(u.values) != "confirm" {
-			u.state = domain.Next(u.values)
+		if u.state != "registered" || s.next(u.values) != "confirm" {
+			u.state = s.next(u.values)
 		}
 	case action == "edit" && (u.state == "registered" || u.state == "confirm"):
 		u.state = "edit"
 	case action == "cancel":
-		u.state = domain.Next(u.values)
+		u.state = s.next(u.values)
 	case strings.HasPrefix(action, "edit_") && u.state == "edit":
 		valid := false
-		for _, f := range domain.Fields {
+		for _, f := range domain.RegistrationFields(s.ParticipationEnabled) {
 			if action == "edit_"+f {
 				valid = true
 			}
@@ -262,8 +278,8 @@ func (s *Service) private(ctx context.Context, tx pgx.Tx, in *pb.Update) error {
 		}
 		u.state = action
 	case action == "confirm" && u.state == "confirm":
-		if domain.Next(u.values) != "confirm" {
-			u.state = domain.Next(u.values)
+		if s.next(u.values) != "confirm" {
+			u.state = s.next(u.values)
 		} else {
 			u.state = "registered"
 		}
@@ -295,7 +311,7 @@ func (s *Service) private(ctx context.Context, tx pgx.Tx, in *pb.Update) error {
 			return reply(&pb.View{Kind: "validation", Field: field, Code: err.Error()})
 		}
 		u.values[field] = value
-		u.state = domain.Next(u.values)
+		u.state = s.next(u.values)
 	}
 	if err = saveUser(ctx, tx, in.Actor, &u); err != nil {
 		return err
@@ -308,6 +324,9 @@ func (s *Service) private(ctx context.Context, tx pgx.Tx, in *pb.Update) error {
 	return reply(s.view(u))
 }
 func (s *Service) milestones(ctx context.Context, tx pgx.Tx) error {
+	if !s.ParticipationEnabled {
+		return nil
+	}
 	for _, n := range s.Milestones {
 		var threshold int
 		err := tx.QueryRow(ctx, store.Q("milestone"), n).Scan(&threshold)

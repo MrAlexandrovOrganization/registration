@@ -13,6 +13,18 @@ Go-backend регистрации на новый выезд. Владеет Pos
 вызывает отдельный frontend. Межсервисный контракт — gRPC/protobuf; HTTP нужен
 только для `/livez`, `/readyz`, `/metrics`.
 
+### Временное отключение вопросов об участии
+
+`PARTICIPATION_ENABLED=false` (по умолчанию и в Compose) скрывает вопросы
+`will_drive` и `trip_attendance`, их ответы в анкете/редактировании, статистике и XLSX.
+Опрос `/poll`, аудитории yes/maybe и уведомления о порогах участия отключены.
+Итоговое подтверждение самой анкеты остаётся: это не подтверждение участия.
+Старые ответы хранятся без изменений, старые кнопки этих вопросов не принимаются;
+незавершённое состояние такого вопроса переходит к актуальной анкете.
+Чтобы включить позже, поставить `PARTICIPATION_ENABLED: 'true'` в Compose backend
+и пересоздать backend. Миграции/удаление данных не нужны. Полный `domain.Fields`
+не сокращать — он задаёт порядок SQL-колонок; активные поля выбираются отдельно.
+
 ## Структура и решения
 
 - `cmd/registration`: lifecycle и CLI; `internal/app`: конфигурация и сборка приложения.
@@ -146,10 +158,14 @@ Compose при host-запуске автоматически не примен�
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | В Compose `http://jaeger:4317`; вне Compose необязателен |
 | `OTEL_EXPORTER_OTLP_INSECURE` | В Compose true: OTLP без TLS внутри `jaeger-net` |
 
-В Compose PostgreSQL подключена только к внутренней database-сети; frontend
+В Compose PostgreSQL подключена только к отдельной database-сети; frontend
 подключается к `registration-api` и существующей `kafka-net`. Опубликованные
 порты доступны только с loopback хоста. Текущий профиль предполагает одну
 доверенную VM; plaintext Kafka не обеспечивает ACL между её клиентами.
+Для DBeaver использовать SSH-туннель к `127.0.0.1:55432` на сервере. Backend
+продолжает обращаться к `postgres:5432` внутри Docker. После изменения сети
+пересоздать контейнеры через Compose: ручное переподключение без `--alias postgres`
+теряет DNS-имя БД и приводит к `database unavailable`.
 Backend также подключён к существующим `jaeger-net` и `prometheus-net`, как frontend
 и `notes-bot`. Новый стек мониторинга не создаётся.
 

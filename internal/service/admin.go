@@ -41,6 +41,9 @@ func (s *Service) admin(ctx context.Context, tx pgx.Tx, in *pb.Update, u *user) 
 	allowed := func(p string) bool { return s.allowed(ctx, tx, in.Actor, p) }
 	switch cmd {
 	case "/help":
+		if !s.ParticipationEnabled {
+			return reply(&pb.View{Kind: "help", Code: "help_registration"})
+		}
 		return reply(&pb.View{Kind: "help"})
 	case "/about":
 		return reply(&pb.View{Kind: "about"})
@@ -78,6 +81,12 @@ func (s *Service) admin(ctx context.Context, tx pgx.Tx, in *pb.Update, u *user) 
 		}
 		if err := tx.QueryRow(ctx, store.Q("stats")).Scan(dest...); err != nil {
 			return true, err
+		}
+		if !s.ParticipationEnabled {
+			for _, i := range []int{0, 1, 2, 7} {
+				v.Fields = append(v.Fields, &pb.Field{Key: "stats_" + strconv.Itoa(i), Value: strconv.FormatInt(v.Numbers[i], 10)})
+			}
+			v.Numbers = nil
 		}
 		return reply(v)
 	case "/sources":
@@ -174,12 +183,18 @@ func (s *Service) admin(ctx context.Context, tx pgx.Tx, in *pb.Update, u *user) 
 		if len(parts) != 2 || !audienceValid(parts[1]) {
 			return notice("command_usage")
 		}
+		if !s.ParticipationEnabled && (parts[1] == "yes" || parts[1] == "maybe") {
+			return notice("invalid_status")
+		}
 		u.state = "broadcast_" + parts[1]
 		if err := saveUser(ctx, tx, in.Actor, u); err != nil {
 			return true, err
 		}
 		return notice("send_source")
 	case "/poll":
+		if !s.ParticipationEnabled {
+			return notice("invalid_status")
+		}
 		if !allowed("message_sender") || in.ChatType != "private" {
 			return notice("denied")
 		}
@@ -219,6 +234,9 @@ func (s *Service) admin(ctx context.Context, tx pgx.Tx, in *pb.Update, u *user) 
 		}
 		if actor != in.Actor && !allowed("admin") {
 			return notice("denied")
+		}
+		if !s.ParticipationEnabled && (kind == "view" || audience == "yes" || audience == "maybe") && (cmd == "/send" || cmd == "/resume" || cmd == "/retry") {
+			return notice("invalid_status")
 		}
 		switch cmd {
 		case "/send":

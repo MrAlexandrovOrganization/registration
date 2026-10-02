@@ -9,7 +9,17 @@ import (
 	"unicode/utf8"
 )
 
+// Fields is the storage order used by SQL scanning and saving. Do not hide UI
+// fields by removing columns here: saved answers must survive feature switches.
 var Fields = []string{"name", "birth_date", "group", "phone", "expectations", "will_drive", "trip_attendance"}
+
+func RegistrationFields(participation bool) []string {
+	if participation {
+		return Fields
+	}
+	return Fields[:5]
+}
+
 var Options = map[string][]string{
 	"will_drive":      {"Обязательно! 🤩", "Пока думаю 🤔", "Не смогу 😢"},
 	"trip_attendance": {"Да, точно еду! ✅", "Нет, не смогу 😢"},
@@ -63,7 +73,11 @@ func Normalize(field, value string) (string, error) {
 
 // Next also asks for invalid legacy values; a nonempty invalid value is never accepted silently.
 func Next(values map[string]string) string {
-	for _, field := range Fields {
+	return NextRegistration(values, true)
+}
+
+func NextRegistration(values map[string]string, participation bool) string {
+	for _, field := range RegistrationFields(participation) {
 		if _, err := Normalize(field, values[field]); err != nil {
 			return field
 		}
