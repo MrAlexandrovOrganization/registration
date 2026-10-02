@@ -70,8 +70,7 @@ services:
     mem_limit: 512m
     cpus: 1.0
 networks:
-  database:
-    internal: true
+  database: {}
   api:
     name: registration-api
   kafka:
