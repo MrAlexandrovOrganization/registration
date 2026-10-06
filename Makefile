@@ -30,6 +30,7 @@ check: proto-gen
 	go vet ./...
 	$(MAKE) test
 	$(MAKE) test-integration
+	$(MAKE) test-compose
 	$(MAKE) config-check
 	$(MAKE) secrets-check
 test: proto-gen
@@ -38,6 +39,9 @@ test-race: proto-gen
 	go test -race ./... -count=1 -timeout=180s
 test-integration: proto-gen
 	python3 scripts/test_integration.py
+.PHONY: test-compose
+test-compose:
+	python3 scripts/test_compose.py
 build: proto-gen
 	go build -trimpath -o .bin/registration ./cmd/registration
 config-check:
@@ -49,9 +53,13 @@ import-dry-run: proto-gen
 validate-data: proto-gen
 	go run ./cmd/registration validate-data
 compose-build:
-	$(DOCKER_COMPOSE) build
+	$(DOCKER_COMPOSE) build backend
 up:
-	$(DOCKER_COMPOSE) up -d --build --wait --wait-timeout 180
+	$(MAKE) compose-build
+	$(DOCKER_COMPOSE) stop backend
+	$(MAKE) database-up
+	$(MAKE) migrate-compose
+	$(DOCKER_COMPOSE) up -d --no-build --pull never --wait --wait-timeout 180 backend
 down:
 	$(DOCKER_COMPOSE) down
 logs:
@@ -69,8 +77,8 @@ versions:
 
 .PHONY: database-up
 database-up:
-	$(DOCKER_COMPOSE) up -d postgres
+	$(DOCKER_COMPOSE) up -d --wait --wait-timeout 180 postgres
 
 .PHONY: migrate-compose
 migrate-compose:
-	$(DOCKER_COMPOSE) run --rm --no-deps backend migrate
+	$(DOCKER_COMPOSE) run --rm --no-deps --pull never migrate

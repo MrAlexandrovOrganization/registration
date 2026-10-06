@@ -24,5 +24,14 @@ No commits/push/deployment unless requested. Read docs/OPERATIONS.md before deli
 CI validates/builds on PR/push main; SSH CD requires repository DEPLOY_ENABLED=true.
 Keep CD disabled until provisioning and coordinated migration 004 rollout are complete.
 SSH workflow fast-forwards main to the checked SHA, then runs the same make up as locally.
-make up builds and waits for healthchecks (180s); migrate-compose is explicit, never a CD dependency.
-No automatic import, topics, migrations or webhook operations in CI/CD.
+Deliberately approved project exception to explicit-only migrations: make up builds
+backend once, stops the old backend, waits for PostgreSQL, runs migrate-compose in a
+fresh disposable CLI container, then starts backend without rebuilding and waits for
+healthchecks (180s). Local and SSH CD use this same sequence. Database/migration
+failure leaves backend stopped; build failure leaves the old backend untouched.
+No automatic rollback. serve (including make run/restart) only checks the schema.
+Do not run concurrent make up operations for the same Compose project; the CD flock
+serializes delivery, while the database advisory lock serializes CLI migrations.
+make check includes make test-compose: real make up on unique synthetic tmpfs fixtures,
+including upgrade/repeat/concurrency/failure. Never use live networks or data for tests.
+No automatic import, topics or webhook operations in CI/CD.
