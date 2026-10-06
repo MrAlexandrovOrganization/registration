@@ -36,10 +36,10 @@ jobs:
           ROOT_ID: '1001'
   deploy:
     needs: [check, build]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.DEPLOY_ENABLED == 'true'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    environment: production
+    # environment: production
     concurrency:
       group: deploy-production
       cancel-in-progress: false
