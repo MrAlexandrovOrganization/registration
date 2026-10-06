@@ -8,6 +8,9 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/segmentio/kafka-go"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
+	"registration.local/backend/internal/observability"
 	"registration.local/backend/internal/store"
 )
 
@@ -26,18 +29,23 @@ func (p *Publisher) Run(ctx context.Context) {
 			return
 		case <-ticker.C:
 			run, cancel := context.WithTimeout(ctx, 10*time.Second)
-			err := p.Once(run)
+			_ = p.Once(run)
 			cancel()
-			if err != nil && ctx.Err() == nil {
-				slog.WarnContext(ctx, "outbox publication deferred")
-			}
 		}
 	}
 }
-func (p *Publisher) Once(ctx context.Context) error {
+func (p *Publisher) Once(ctx context.Context) (result error) {
+	stage := "reconcile"
+	defer func() {
+		if result != nil {
+			attrs := append(observability.ErrorAttrs(result), slog.String("stage", stage))
+			slog.LogAttrs(ctx, slog.LevelWarn, "outbox.publication_deferred", attrs...)
+		}
+	}()
 	if _, err := p.DB.Exec(ctx, store.Q("reconcile_cancelled")); err != nil {
 		return err
 	}
+	stage = "select_due"
 	rows, err := p.DB.Query(ctx, store.Q("publish_due"))
 	if err != nil {
 		return err
@@ -60,14 +68,21 @@ func (p *Publisher) Once(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	parent := ctx
 	for _, i := range batch {
+		ctx = otel.GetTextMapPropagator().Extract(parent, propagation.MapCarrier{"traceparent": i.traceparent})
+		stage = "kafka_write"
 		msg := kafka.Message{Topic: p.Prefix + "." + i.priority + ".v1", Key: []byte(strconv.FormatInt(i.chat, 10)), Value: []byte(strconv.FormatInt(i.id, 10)), Headers: []kafka.Header{{Key: "traceparent", Value: []byte(i.traceparent)}}}
 		if err = p.Writer.WriteMessages(ctx, msg); err != nil {
 			return err
 		}
+		stage = "mark_published"
 		if _, err = p.DB.Exec(ctx, store.Q("published"), i.id); err != nil {
 			return err
 		}
+	}
+	if len(batch) > 0 {
+		slog.DebugContext(parent, "outbox.published", "count", len(batch))
 	}
 	return nil
 }

@@ -355,14 +355,20 @@ func TestSystem(t *testing.T) {
 	must(app.InitTopics(ctx))
 	exec("UPDATE outbound_messages SET status='sent' WHERE status<>'cancelled'")
 	send(user, "/start", "")
-	must(db.QueryRow(ctx, "SELECT max(id) FROM outbound_messages WHERE priority='interactive' AND status='pending'").Scan(&job))
+	send(101, "/poll registered", "")
+	send(101, "/send 3", "")
+	must(db.QueryRow(ctx, "SELECT id FROM outbound_messages WHERE broadcast_id=3").Scan(&job))
 	writer := &kafka.Writer{Addr: kafka.TCP(broker), Balancer: &kafka.Hash{}, RequiredAcks: kafka.RequireAll, WriteTimeout: 5 * time.Second}
 	defer writer.Close()
 	publisher := &queue.Publisher{DB: db, Writer: writer, Prefix: "registration.fixture"}
 	call, stop := context.WithTimeout(ctx, 20*time.Second)
 	defer stop()
 	must(publisher.Once(call))
-	reader := kafka.NewReader(kafka.ReaderConfig{Brokers: []string{broker}, Topic: "registration.fixture.interactive.v1", GroupID: "fixture", MinBytes: 1, MaxBytes: 65536, StartOffset: kafka.FirstOffset})
+	must(db.QueryRow(ctx, "SELECT count(*) FROM outbound_messages WHERE priority='interactive' AND published_at IS NOT NULL").Scan(&count))
+	if count != 0 {
+		t.Fatal("interactive jobs published to Kafka")
+	}
+	reader := kafka.NewReader(kafka.ReaderConfig{Brokers: []string{broker}, Topic: "registration.fixture.broadcast.v1", GroupID: "fixture", MinBytes: 1, MaxBytes: 65536, StartOffset: kafka.FirstOffset})
 	defer reader.Close()
 	message, err := reader.FetchMessage(call)
 	must(err)

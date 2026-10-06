@@ -32,13 +32,15 @@ Go-backend регистрации на новый выезд. Владеет Pos
 - `internal/service`: регистрация, административные сценарии, доставка.
 - `internal/store`: PostgreSQL adapter с `go:embed` SQL и миграциями.
 - `internal/legacy`: standalone SQLite только read-only; Python-код не загружается.
-- `internal/queue`: publisher outbox → Kafka.
+- `internal/queue`: publisher broadcast outbox → Kafka; interactive outbox обнаруживается через gRPC.
 - `api/registration.proto`: канонический контракт; `*.pb.go` генерируются локально и игнорируются Git.
 
 Сохраняем предметные таблицы `users`, `user_permissions`, `bot_chats`, имена
 полей и старые строковые варианты ответа. `will_drive` означает намерение
 поехать, не наличие автомобиля. Даты рождения пока TEXT `ДД.ММ.ГГГГ`, чтобы
 сохранить существующие значения; технические даты — TIMESTAMPTZ, ID — BIGINT.
+Новый ввод допускает день/месяц без ведущего нуля (`10.3.2002`) и сохраняется
+канонически (`10.03.2002`). Импортированные значения автоматически не переписываются.
 У пользователя одна актуальная анкета. Прошлый выезд и переписка остаются
 в архивной SQLite. `users.version` — техническая версия для защиты callback.
 
@@ -96,9 +98,16 @@ Pre-commit форматирует только staged Go-файлы, исклю�
 сохраняет unstaged-правки и останавливает коммит после исправлений. Автоматического
 `git add` нет, неизвестные hooks не перезаписываются.
 
-CI на PR и push main вызывает Make-цели, сборку бинарника и образа. Автодеплоя
-пока нет: репозитории должны быть опубликованы, а первое переключение с импортом
-проводится по [MIGRATION.md](docs/MIGRATION.md).
+CI на PR и push main вызывает `make install`, `make check`, `make test-race`,
+`make build`; отдельный job выполняет `make compose-build`. SSH CD зависит от
+успеха обоих jobs и включается только repository variable `DEPLOY_ENABLED=true`
+для push main. По умолчанию деплой пропущен. Репозитории пока не опубликованы.ё
+Все jobs используют `ubuntu-24.04`. Deploy использует environment `production`,
+обновляет main fast-forward до проверенного SHA
+и вызывает `make up`, как при локальном запуске. Эта цель собирает образы и ждёт
+готовности по healthchecks до 180 секунд (`--wait --wait-timeout 180`).
+Настройки и coordinated rollout migration 004 — [OPERATIONS.md](docs/OPERATIONS.md),
+первый импорт — [MIGRATION.md](docs/MIGRATION.md).
 
 ## Локальный запуск
 
@@ -171,6 +180,30 @@ Backend также подключён к существующим `jaeger-net` �
 
 ## Отправка и рассылки
 
+### Direct interactive gRPC
+
+`Accept` возвращает `Receipt.delivery_ids` после атомарного сохранения ответа.
+Повтор update возвращает те же ID без повторного выполнения сценария. Frontend
+передаёт их общему sender с прежними Claim/Complete, lease и limiter. Bounded RPC
+`PendingInteractive` восстанавливает ответы, due retries, exports, sync и milestones
+после сбоя; Kafka обслуживает только broadcast. Это синхронный результат команды,
+а не Telegram HTTP внутри RPC и не очередь только в памяти.
+
+Точный контракт, правила callback edit и recovery:
+[INTERACTIVE.md](docs/INTERACTIVE.md). Изменение protobuf additive, но требуется
+coordinated transition backend/frontend с миграцией 004: legacy/dual-delivery
+режима нет, старый frontend не умеет получать новые interactive jobs.
+
+Недоступные административные команды backend молча завершает: update сохраняется
+для дедупликации, но outbox-ответ и delivery IDs не создаются. Неизвестные команды
+также игнорируются. Обычная `/help` содержит только публичные команды (`help_public`),
+без отдельного интерфейса участника. Operator help и `/my_permissions` доступны только в личном
+чате root/владельцам admin, table_viewer или message_sender. Ролевые flags и staff
+permission сами по себе не открывают operator help. В группе help всегда публичный.
+При Claim доступ к queued административным ответам проверяется заново; недоступные
+задания отменяются без отправки и без замены отказом. Ошибки анкеты, некорректное
+содержимое сообщения и обычная информация по-прежнему получают ответы.
+
 ### Учёт источников
 
 Ссылка `https://t.me/ИМЯ_БОТА?start=website` поступает как `/start website`.
@@ -203,11 +236,11 @@ Callback анкеты содержит версию состояния поль�
 один раз. Перед обновлением применить `make migrate` при остановленных сервисах.
 Кнопки старого формата после обновления предлагают заново открыть `/start`.
 
-Изменение анкеты, дедупликация update и создание ответа — одна транзакция.
+Изменение анкеты, дедупликация update, создание ответа и связь update → jobs — одна транзакция.
 Получатели рассылки фиксируются при `/send ID`, уникальны по `(broadcast_id,chat)`.
-Kafka несёт только ID задания, ключ чата и traceparent, не содержимое анкеты.
+Kafka несёт только ID задания рассылки, ключ чата и traceparent, не содержимое анкеты.
 Publisher ждёт `acks=all`, затем отмечает публикацию. Через 30 секунд незавершённое
-задание может публиковаться снова: PostgreSQL остаётся источником состояния,
+broadcast-задание может публиковаться снова: PostgreSQL остаётся источником состояния,
 потеря Kafka event/retention не означает потерю задания.
 
 Sender получает эксклюзивный lease 90 секунд; таймаут обработки 55 секунд плюс
@@ -231,7 +264,7 @@ Sender получает эксклюзивный lease 90 секунд; тайм
 make init-topics
 ```
 
-Команда создаёт только `<prefix>.interactive.v1` и `<prefix>.broadcast.v1`:
+Команда создаёт только `<prefix>.broadcast.v1` (interactive доставляется через gRPC):
 3 партиции, replication factor 1 для существующего single-node Kafka,
 retention 7 суток / 256 MiB на партицию, max message 64 KiB. Существующие
 конфигурации не изменяет. Запуск на VM — после проверки доступного диска.
@@ -240,7 +273,11 @@ retention 7 суток / 256 MiB на партицию, max message 64 KiB. Су
 
 JSON stdout: `time` UTC, `level`, `msg`, `service`; `trace_id`/`span_id` из
 активного контекста. Сырые updates, анкеты, токены, SQL-параметры не логируются.
-Ошибки PostgreSQL выводят только SQLSTATE. gRPC stats handlers переносят OTel
+События `rpc.completed`, `update.committed`, `update.replayed`, `delivery.completed`
+дают безопасные результаты/длительность/счётчики; Claim/PendingInteractive success
+пишутся на Debug. Authentication failures также учитываются. Ошибки содержат
+только классификацию, stage и проверенный SQLSTATE, без raw error.
+gRPC stats handlers переносят OTel
 контекст; traceparent сохраняется с outbox и восстанавливается sender.
 
 `/livez` проверяет процесс, `/readyz` — PostgreSQL. Kafka — восстанавливаемая

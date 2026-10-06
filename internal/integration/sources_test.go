@@ -48,6 +48,8 @@ func TestFirstStarts(t *testing.T) {
 	}
 	must(store.Migrate(ctx, db))
 	// Reconstruct version 1 and verify the real upgrade preserves historical users.
+	exec("ALTER TABLE outbound_messages DROP COLUMN update_bot_id CASCADE, DROP COLUMN update_id CASCADE, DROP COLUMN edit_message_id CASCADE")
+	exec("DROP INDEX outbound_interactive_due")
 	exec("DROP TABLE first_starts")
 	exec("ALTER TABLE milestone_notifications DROP CONSTRAINT milestone_notifications_pkey")
 	exec("ALTER TABLE milestone_notifications ADD COLUMN epoch BIGINT NOT NULL DEFAULT 1")
@@ -175,8 +177,12 @@ func TestFirstStarts(t *testing.T) {
 		must(protojson.Unmarshal(data, v))
 		return v
 	}
-	if v := view(20, "/sources"); v.Code != "denied" {
-		t.Fatal("unauthorized statistics", v)
+	var before, after int
+	must(db.QueryRow(ctx, "SELECT count(*) FROM outbound_messages WHERE chat=20").Scan(&before))
+	send(20, "/sources")
+	must(db.QueryRow(ctx, "SELECT count(*) FROM outbound_messages WHERE chat=20").Scan(&after))
+	if before != after {
+		t.Fatal("unauthorized statistics created a reply")
 	}
 	v := view(1, "/sources")
 	counts := map[string]string{}

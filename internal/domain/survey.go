@@ -26,6 +26,7 @@ var Options = map[string][]string{
 }
 var phone = regexp.MustCompile(`^\+?[0-9 ()-]+$`)
 var digits = regexp.MustCompile(`\D`)
+var birthDate = regexp.MustCompile(`^[0-9]{1,2}\.[0-9]{1,2}\.[0-9]{4}$`)
 
 func Normalize(field, value string) (string, error) {
 	value = strings.TrimSpace(value)
@@ -38,7 +39,10 @@ func Normalize(field, value string) (string, error) {
 			return "", errors.New("invalid_value")
 		}
 	case "birth_date":
-		date, err := time.Parse("02.01.2006", value)
+		if !birthDate.MatchString(value) {
+			return "", errors.New("invalid_date")
+		}
+		date, err := time.Parse("2.1.2006", value)
 		if err != nil || date.After(time.Now()) || date.Year() < 1900 {
 			return "", errors.New("invalid_date")
 		}

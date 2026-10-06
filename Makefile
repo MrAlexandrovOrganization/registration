@@ -41,7 +41,7 @@ test-integration: proto-gen
 build: proto-gen
 	go build -trimpath -o .bin/registration ./cmd/registration
 config-check:
-	$(DOCKER_COMPOSE) --env-file config/test.env config --quiet
+	env -u POSTGRES_PASSWORD -u BACKEND_TOKEN -u BOT_ID -u ROOT_ID $(DOCKER_COMPOSE) --env-file config/test.env config --quiet
 migrate: proto-gen
 	go run ./cmd/registration migrate
 import-dry-run: proto-gen
@@ -51,7 +51,7 @@ validate-data: proto-gen
 compose-build:
 	$(DOCKER_COMPOSE) build
 up:
-	$(DOCKER_COMPOSE) up -d --build
+	$(DOCKER_COMPOSE) up -d --build --wait --wait-timeout 180
 down:
 	$(DOCKER_COMPOSE) down
 logs:
@@ -70,3 +70,7 @@ versions:
 .PHONY: database-up
 database-up:
 	$(DOCKER_COMPOSE) up -d postgres
+
+.PHONY: migrate-compose
+migrate-compose:
+	$(DOCKER_COMPOSE) run --rm --no-deps backend migrate

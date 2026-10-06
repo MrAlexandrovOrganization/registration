@@ -1,4 +1,4 @@
-name: CI
+name: CI/CD
 on:
   push:
     branches: [main]
@@ -7,7 +7,7 @@ permissions:
   contents: read
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -27,9 +27,52 @@ jobs:
       - run: make check
       - run: make test-race
       - run: make build
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
       - run: make compose-build
         env:
           POSTGRES_PASSWORD: synthetic-fixture-password
           BACKEND_TOKEN: synthetic-fixture-backend-token-at-least-32
           BOT_ID: '1000'
           ROOT_ID: '1001'
+  deploy:
+    needs: [check, build]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: production
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    steps:
+      - name: Deploy checked revision via SSH
+        uses: appleboy/ssh-action@v1.2.2
+        env:
+          PROJECT_PATH: ${{ secrets.VM_PROJECT_PATH }}
+          DEPLOY_SHA: ${{ github.sha }}
+        with:
+          host: ${{ secrets.VM_HOST }}
+          username: ${{ secrets.VM_USER }}
+          key: ${{ secrets.VM_SSH_KEY }}
+          envs: PROJECT_PATH,DEPLOY_SHA
+          command_timeout: 25m
+          script: |
+            set -eu
+            test -n "$PROJECT_PATH"
+            cd "$PROJECT_PATH"
+            test "$(git rev-parse --show-toplevel)" = "$(pwd -P)"
+            exec 9>"$HOME/.registration-deploy.lock"
+            flock -w 1200 9
+            test "$(git branch --show-current)" = main
+            test -z "$(git status --porcelain --untracked-files=all)"
+            test "${#DEPLOY_SHA}" -eq 40
+            case "$DEPLOY_SHA" in *[!0-9a-f]*) exit 1 ;; esac
+            git fetch --quiet origin refs/heads/main
+            test "$(git rev-parse FETCH_HEAD)" = "$DEPLOY_SHA" || { printf '%s\n' 'Stale workflow: main differs from checked SHA' >&2; exit 1; }
+            git merge-base --is-ancestor HEAD "$DEPLOY_SHA"
+            git merge --ff-only --quiet "$DEPLOY_SHA"
+            test "$(git rev-parse HEAD)" = "$DEPLOY_SHA"
+            make up

@@ -37,6 +37,28 @@ func Auth(token string) grpc.UnaryServerInterceptor {
 		return next(bounded, req)
 	}
 }
+
+// Observation is outside Auth so rejected requests are counted as well. Never
+// record req, response, metadata or the raw error returned by a handler.
+func ObserveRPC(calls *prometheus.CounterVec, duration *prometheus.HistogramVec) grpc.UnaryServerInterceptor {
+	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, next grpc.UnaryHandler) (any, error) {
+		t := time.Now()
+		res, err := next(ctx, req)
+		code := status.Code(err).String()
+		elapsed := time.Since(t)
+		calls.WithLabelValues(info.FullMethod, code).Inc()
+		duration.WithLabelValues(info.FullMethod).Observe(elapsed.Seconds())
+		level := slog.LevelInfo
+		if info.FullMethod == pb.Registration_Claim_FullMethodName || info.FullMethod == pb.Registration_PendingInteractive_FullMethodName {
+			level = slog.LevelDebug
+		}
+		if err != nil {
+			level = slog.LevelWarn
+		}
+		slog.Log(ctx, level, "rpc.completed", "method", info.FullMethod, "code", code, "duration_ms", elapsed.Milliseconds())
+		return res, err
+	}
+}
 func Serve(ctx context.Context, c Config) error {
 	start, cancel := context.WithTimeout(ctx, 10*time.Second)
 	db, err := store.Open(start, c.DSN)
@@ -54,16 +76,7 @@ func Serve(ctx context.Context, c Config) error {
 	calls := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "registration_rpc_total", Help: "RPC results"}, []string{"method", "code"})
 	duration := prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "registration_rpc_seconds", Help: "RPC latency"}, []string{"method"})
 	registry.MustRegister(calls, duration)
-	options := []grpc.ServerOption{grpc.MaxRecvMsgSize(64 << 10), grpc.MaxSendMsgSize(16 << 20), grpc.MaxConcurrentStreams(32), grpc.StatsHandler(otelgrpc.NewServerHandler()), grpc.ChainUnaryInterceptor(Auth(c.Token), func(ctx context.Context, req any, info *grpc.UnaryServerInfo, next grpc.UnaryHandler) (any, error) {
-		t := time.Now()
-		res, e := next(ctx, req)
-		calls.WithLabelValues(info.FullMethod, status.Code(e).String()).Inc()
-		duration.WithLabelValues(info.FullMethod).Observe(time.Since(t).Seconds())
-		if e != nil {
-			slog.WarnContext(ctx, "RPC failed", "method", info.FullMethod, "code", status.Code(e).String())
-		}
-		return res, e
-	})}
+	options := []grpc.ServerOption{grpc.MaxRecvMsgSize(64 << 10), grpc.MaxSendMsgSize(16 << 20), grpc.MaxConcurrentStreams(32), grpc.StatsHandler(otelgrpc.NewServerHandler()), grpc.ChainUnaryInterceptor(ObserveRPC(calls, duration), Auth(c.Token))}
 	if c.TLSCert != "" {
 		creds, e := credentials.NewServerTLSFromFile(c.TLSCert, c.TLSKey)
 		if e != nil {

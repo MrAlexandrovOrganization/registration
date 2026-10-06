@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"math/rand/v2"
 	"strconv"
 	"strings"
@@ -18,6 +19,7 @@ import (
 )
 
 func (s *Service) Claim(ctx context.Context, r *pb.ClaimRequest) (*pb.Delivery, error) {
+	internal := func(err error) error { return persistenceError(ctx, err) }
 	if len(r.Worker) < 8 || len(r.Worker) > 100 || r.Id < 0 {
 		return nil, status.Error(codes.InvalidArgument, "invalid claim")
 	}
@@ -42,7 +44,7 @@ func (s *Service) Claim(ctx context.Context, r *pb.ClaimRequest) (*pb.Delivery, 
 		d.Id = r.Id
 		d.Lease = token()
 		var body []byte
-		err = tx.QueryRow(ctx, store.Q("claim"), r.Id, d.Lease).Scan(&d.Chat, &d.Kind, &body, &d.SourceChat, &d.SourceMessage, &d.Actor, &d.Traceparent, &d.Group)
+		err = tx.QueryRow(ctx, store.Q("claim"), r.Id, d.Lease).Scan(&d.Chat, &d.Kind, &body, &d.SourceChat, &d.SourceMessage, &d.Actor, &d.Traceparent, &d.Group, &d.EditMessageId)
 		if errors.Is(err, pgx.ErrNoRows) {
 			d.Id = 0
 			d.Lease = ""
@@ -53,7 +55,18 @@ func (s *Service) Claim(ctx context.Context, r *pb.ClaimRequest) (*pb.Delivery, 
 			if err = protojson.Unmarshal(body, d.View); err != nil {
 				return nil, status.Error(codes.Internal, "invalid persisted view")
 			}
-			if !s.ParticipationEnabled && d.Kind == "view" {
+			allowed, err := s.deliveryAllowed(ctx, tx, d)
+			if err != nil {
+				return nil, internal(err)
+			}
+			if !allowed {
+				// Finish under the acquired lease without exposing a payload to the
+				// sender or leaving a cancelled reply at the head of the chat.
+				if _, err = tx.Exec(ctx, store.Q("complete"), d.Id, d.Lease, "cancelled", 0, float64(0), int64(0), ""); err != nil {
+					return nil, internal(err)
+				}
+				d = &pb.Delivery{}
+			} else if !s.ParticipationEnabled && d.Kind == "view" {
 				d.View = registrationOnlyView(d.View)
 			}
 		}
@@ -122,6 +135,7 @@ func RetryPolicy(outcome string, attempts int, retryAfter int64) (state string, 
 	}
 }
 func (s *Service) Complete(ctx context.Context, r *pb.Completion) (*pb.Receipt, error) {
+	internal := func(err error) error { return persistenceError(ctx, err) }
 	if r.Id <= 0 || r.Lease == "" {
 		return nil, status.Error(codes.InvalidArgument, "invalid completion")
 	}
@@ -169,7 +183,8 @@ func (s *Service) Complete(ctx context.Context, r *pb.Completion) (*pb.Receipt, 
 			return nil, internal(err)
 		}
 	}
-	if kind == "sync" && r.Outcome == "sent" {
+	syncAllowed := kind == "sync" && s.allowed(ctx, tx, actor, "admin")
+	if syncAllowed && r.Outcome == "sent" {
 		view := &pb.View{}
 		if err = protojson.Unmarshal(body, view); err != nil {
 			return nil, internal(err)
@@ -184,7 +199,7 @@ func (s *Service) Complete(ctx context.Context, r *pb.Completion) (*pb.Receipt, 
 			return nil, internal(err)
 		}
 	}
-	if kind == "sync" && state == "failed" {
+	if syncAllowed && state == "failed" {
 		if err = enqueue(ctx, tx, chat, false, "view", &pb.View{Kind: "notice", Code: "sync_denied"}, actor, 0, 0); err != nil {
 			return nil, internal(err)
 		}
@@ -192,10 +207,12 @@ func (s *Service) Complete(ctx context.Context, r *pb.Completion) (*pb.Receipt, 
 	if err = tx.Commit(ctx); err != nil {
 		return nil, internal(err)
 	}
+	slog.InfoContext(ctx, "delivery.completed", "outcome", r.Outcome, "state", state, "attempts", attempts+increment)
 	return &pb.Receipt{}, nil
 }
 
 func (s *Service) Export(ctx context.Context, r *pb.ExportRequest) (*pb.ExportResponse, error) {
+	internal := func(err error) error { return persistenceError(ctx, err) }
 	tx, err := s.DB.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
 	if err != nil {
 		return nil, internal(err)

@@ -58,7 +58,7 @@ services:
       - '127.0.0.1:50052:50052'
       - '127.0.0.1:9095:9095'
     healthcheck:
-      test: [CMD, wget, -q, -O, /dev/null, 'http://127.0.0.1:9095/livez']
+      test: [CMD, wget, -q, -O, /dev/null, 'http://127.0.0.1:9095/readyz']
       interval: 15s
       timeout: 3s
       retries: 3

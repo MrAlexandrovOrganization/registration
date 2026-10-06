@@ -28,19 +28,41 @@ func permissionValid(v string) bool {
 	}
 	return false
 }
-func (s *Service) admin(ctx context.Context, tx pgx.Tx, in *pb.Update, u *user) (bool, error) {
+func (s *Service) admin(ctx context.Context, tx pgx.Tx, in *pb.Update, u *user, replies *replies) (bool, error) {
 	parts := strings.Fields(in.Text)
 	if len(parts) == 0 {
 		return false, nil
 	}
 	cmd := strings.Split(parts[0], "@")[0]
 	reply := func(v *pb.View) (bool, error) {
-		return true, enqueue(ctx, tx, in.Chat, in.ChatType != "private", "view", v, in.Actor, 0, 0)
+		return true, replies.enqueue(ctx, tx, in.Chat, in.ChatType != "private", "view", v, in.Actor, 0, 0)
 	}
-	notice := func(code string) (bool, error) { return reply(&pb.View{Kind: "notice", Code: code}) }
+	notice := func(code string) (bool, error) {
+		if code == "denied" {
+			return true, nil
+		}
+		return reply(&pb.View{Kind: "notice", Code: code})
+	}
+	// Public help and unknown/privileged commands must not reveal operator roles.
+	operator, err := s.operator(ctx, tx, in.Actor)
+	if err != nil {
+		return true, err
+	}
+	if !operator {
+		switch cmd {
+		case "/help":
+			return reply(&pb.View{Kind: "help_public"})
+		case "/start", "/cancel", "/about", "/bring":
+		default:
+			return true, nil
+		}
+	}
 	allowed := func(p string) bool { return s.allowed(ctx, tx, in.Actor, p) }
 	switch cmd {
 	case "/help":
+		if in.ChatType != "private" {
+			return reply(&pb.View{Kind: "help_public"})
+		}
 		if !s.ParticipationEnabled {
 			return reply(&pb.View{Kind: "help", Code: "help_registration"})
 		}
@@ -50,6 +72,9 @@ func (s *Service) admin(ctx context.Context, tx pgx.Tx, in *pb.Update, u *user) 
 	case "/bring":
 		return reply(&pb.View{Kind: "bring"})
 	case "/my_permissions":
+		if in.ChatType != "private" {
+			return true, nil
+		}
 		v := &pb.View{Kind: "permissions"}
 		if in.Actor == s.RootID {
 			v.Fields = append(v.Fields, &pb.Field{Key: "permission", Value: "root"})
@@ -131,13 +156,13 @@ func (s *Service) admin(ctx context.Context, tx pgx.Tx, in *pb.Update, u *user) 
 		if !allowed("table_viewer") || in.ChatType != "private" {
 			return notice("denied")
 		}
-		return true, enqueue(ctx, tx, in.Chat, false, "export", nil, in.Actor, 0, 0)
+		return true, replies.enqueue(ctx, tx, in.Chat, false, "export", nil, in.Actor, 0, 0)
 	case "/sync_staff_chat", "/sync_counselor_chat":
 		if !allowed("admin") || in.ChatType != "private" {
 			return notice("denied")
 		}
 		role := strings.TrimSuffix(strings.TrimPrefix(cmd, "/sync_"), "_chat")
-		return true, enqueue(ctx, tx, in.Chat, false, "sync", &pb.View{Code: role, Numbers: []int64{0, 0, 0}}, in.Actor, 0, 0)
+		return true, replies.enqueue(ctx, tx, in.Chat, false, "sync", &pb.View{Code: role, Numbers: []int64{0, 0, 0}}, in.Actor, 0, 0)
 	case "/grant_permission", "/revoke_permission":
 		if !allowed("admin") {
 			return notice("denied")
@@ -192,11 +217,11 @@ func (s *Service) admin(ctx context.Context, tx pgx.Tx, in *pb.Update, u *user) 
 		}
 		return notice("send_source")
 	case "/poll":
-		if !s.ParticipationEnabled {
-			return notice("invalid_status")
-		}
 		if !allowed("message_sender") || in.ChatType != "private" {
 			return notice("denied")
+		}
+		if !s.ParticipationEnabled {
+			return notice("invalid_status")
 		}
 		if len(parts) != 2 || !audienceValid(parts[1]) {
 			return notice("command_usage")
@@ -208,7 +233,7 @@ func (s *Service) admin(ctx context.Context, tx pgx.Tx, in *pb.Update, u *user) 
 		if err := tx.QueryRow(ctx, store.Q("audience_count"), parts[1]).Scan(&count); err != nil {
 			return true, err
 		}
-		if err := enqueue(ctx, tx, in.Chat, false, "view", s.pollView(), in.Actor, 0, 0); err != nil {
+		if err := replies.enqueue(ctx, tx, in.Chat, false, "view", s.pollView(), in.Actor, 0, 0); err != nil {
 			return true, err
 		}
 		return reply(&pb.View{Kind: "broadcast_preview", Numbers: []int64{id, count}})
@@ -308,7 +333,7 @@ func (s *Service) admin(ctx context.Context, tx pgx.Tx, in *pb.Update, u *user) 
 	if cmd == "/start" || cmd == "/cancel" {
 		return false, nil
 	}
-	return notice("command_usage")
+	return true, nil
 }
 func (s *Service) pollView() *pb.View {
 	return &pb.View{Kind: "poll", Buttons: []*pb.Button{
@@ -316,11 +341,11 @@ func (s *Service) pollView() *pb.View {
 		{LabelKey: "trip_attendance_1", Data: "p:1"},
 	}}
 }
-func (s *Service) adminGroup(ctx context.Context, tx pgx.Tx, in *pb.Update) error {
+func (s *Service) adminGroup(ctx context.Context, tx pgx.Tx, in *pb.Update, replies *replies) error {
 	if !strings.HasPrefix(in.Text, "/") {
 		return nil
 	}
-	_, err := s.admin(ctx, tx, in, nil)
+	_, err := s.admin(ctx, tx, in, nil, replies)
 	return err
 }
 func (s *Service) member(ctx context.Context, tx pgx.Tx, in *pb.Update) error {
@@ -349,6 +374,7 @@ func (s *Service) member(ctx context.Context, tx pgx.Tx, in *pb.Update) error {
 	return nil
 }
 func (s *Service) Members(ctx context.Context, r *pb.MembersRequest) (*pb.MembersResponse, error) {
+	internal := func(err error) error { return persistenceError(ctx, err) }
 	if r.Role != "staff" && r.Role != "counselor" {
 		return nil, status.Error(codes.InvalidArgument, "invalid role")
 	}
@@ -380,6 +406,7 @@ func (s *Service) Members(ctx context.Context, r *pb.MembersRequest) (*pb.Member
 }
 
 func (s *Service) SyncMember(ctx context.Context, r *pb.SyncMemberRequest) (*pb.Receipt, error) {
+	internal := func(err error) error { return persistenceError(ctx, err) }
 	tx, err := s.DB.Begin(ctx)
 	if err != nil {
 		return nil, internal(err)

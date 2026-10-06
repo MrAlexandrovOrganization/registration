@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
@@ -19,6 +18,7 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	pb "registration.local/backend/api"
 	"registration.local/backend/internal/domain"
+	"registration.local/backend/internal/observability"
 	"registration.local/backend/internal/store"
 )
 
@@ -34,17 +34,14 @@ func (s *Service) next(values map[string]string) string {
 	return domain.NextRegistration(values, s.ParticipationEnabled)
 }
 
-func internal(err error) error {
+func persistenceError(ctx context.Context, err error) error {
 	if err == nil {
 		return nil
 	}
 	if _, ok := status.FromError(err); ok {
 		return err
 	}
-	var pg *pgconn.PgError
-	if errors.As(err, &pg) {
-		slog.Error("database operation failed", "sqlstate", pg.Code)
-	}
+	slog.LogAttrs(ctx, slog.LevelError, "persistence.failed", observability.ErrorAttrs(err)...)
 	return status.Error(codes.Unavailable, "operation could not be persisted")
 }
 func (s *Service) allowed(ctx context.Context, tx pgx.Tx, actor int64, permission string) bool {
@@ -54,12 +51,32 @@ func (s *Service) allowed(ctx context.Context, tx pgx.Tx, actor int64, permissio
 	var ok bool
 	return tx.QueryRow(ctx, store.Q("allowed"), actor, permission).Scan(&ok) == nil && ok
 }
+
+func (s *Service) operator(ctx context.Context, tx pgx.Tx, actor int64) (bool, error) {
+	if actor == s.RootID {
+		return true, nil
+	}
+	var ok bool
+	err := tx.QueryRow(ctx, store.Q("operator"), actor).Scan(&ok)
+	return ok, err
+}
 func carrier(ctx context.Context) string {
 	c := propagation.MapCarrier{}
 	otel.GetTextMapPropagator().Inject(ctx, c)
 	return c.Get("traceparent")
 }
 func enqueue(ctx context.Context, tx pgx.Tx, chat int64, group bool, kind string, view *pb.View, actor, sourceChat, sourceMessage int64) error {
+	return (*replies)(nil).enqueue(ctx, tx, chat, group, kind, view, actor, sourceChat, sourceMessage)
+}
+
+// replies associates immediate effects with their durable inbound update.
+// Background effects intentionally have no inbound association.
+type replies struct {
+	botID  int64
+	update *pb.Update
+}
+
+func (r *replies) enqueue(ctx context.Context, tx pgx.Tx, chat int64, group bool, kind string, view *pb.View, actor, sourceChat, sourceMessage int64) error {
 	data := []byte("{}")
 	var err error
 	if view != nil {
@@ -68,12 +85,47 @@ func enqueue(ctx context.Context, tx pgx.Tx, chat int64, group bool, kind string
 			return err
 		}
 	}
-	_, err = tx.Exec(ctx, store.Q("enqueue"), chat, group, "interactive", kind, data, actor, sourceChat, sourceMessage, carrier(ctx))
+	var botID, updateID *int64
+	var editID int64
+	if r != nil {
+		botID, updateID = &r.botID, &r.update.Id
+		if chat == r.update.Chat && !group && kind == "view" {
+			editID = editTarget(r.update, view)
+		}
+	}
+	_, err = tx.Exec(ctx, store.Q("enqueue"), chat, group, "interactive", kind, data, actor, sourceChat, sourceMessage, carrier(ctx), botID, updateID, editID)
 	return err
 }
+
+func editTarget(u *pb.Update, view *pb.View) int64 {
+	if !u.CallbackMessageEditable || u.Callback == "" || u.MessageId <= 0 || u.ChatType != "private" || u.Chat != u.Actor || view == nil {
+		return 0
+	}
+	switch view.Kind {
+	case "question":
+		// Phone questions may require a reply keyboard, which editMessageText cannot set.
+		if view.Field == "phone" {
+			return 0
+		}
+	case "confirm", "registered", "edit":
+	default:
+		return 0
+	}
+	return u.MessageId
+}
+
+func updateReplies(ctx context.Context, tx pgx.Tx, botID, updateID int64) ([]int64, error) {
+	rows, err := tx.Query(ctx, store.Q("update_replies"), botID, updateID)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, pgx.RowTo[int64])
+}
+
 func (s *Service) Accept(ctx context.Context, u *pb.Update) (*pb.Receipt, error) {
-	if u.Id < 0 || u.Actor <= 0 || u.Chat == 0 || len(u.Text) > 8192 || len(u.Callback) > 64 || len(u.Username) > 128 || len(u.DisplayName) > 512 {
-		return nil, status.Error(codes.InvalidArgument, "invalid update")
+	internal := func(err error) error { return persistenceError(ctx, err) }
+	if err := validateUpdateIdentity(s.BotID, u); err != nil {
+		return nil, err
 	}
 	tx, err := s.DB.Begin(ctx)
 	if err != nil {
@@ -85,9 +137,20 @@ func (s *Service) Accept(ctx context.Context, u *pb.Update) (*pb.Receipt, error)
 		return nil, internal(err)
 	}
 	if tag.RowsAffected() == 0 {
-		return &pb.Receipt{Duplicate: true}, nil
+		ids, err := updateReplies(ctx, tx, s.BotID, u.Id)
+		if err != nil {
+			return nil, internal(err)
+		}
+		slog.InfoContext(ctx, "update.replayed", "reply_count", len(ids))
+		return &pb.Receipt{Duplicate: true, DeliveryIds: ids}, nil
 	}
-	if u.Kind == "blocked" {
+	replies := &replies{botID: s.BotID, update: u}
+	contentValid := validUpdateContent(u)
+	if !contentValid {
+		// Identity is trusted, but content is permanently unprocessable. Persist
+		// only dedup + a neutral reply, never the offending data or domain effects.
+		err = replies.enqueue(ctx, tx, u.Chat, u.ChatType != "private", "view", &pb.View{Kind: "notice", Code: "invalid_content"}, u.Actor, 0, 0)
+	} else if u.Kind == "blocked" {
 		if u.ChatType == "private" {
 			v := 0
 			if !u.MemberActive {
@@ -98,23 +161,25 @@ func (s *Service) Accept(ctx context.Context, u *pb.Update) (*pb.Receipt, error)
 	} else if u.Kind == "member" {
 		err = s.member(ctx, tx, u)
 	} else if u.ChatType != "private" {
-		err = s.adminGroup(ctx, tx, u)
+		err = s.adminGroup(ctx, tx, u, replies)
 	} else {
-		if u.Chat != u.Actor {
-			return nil, status.Error(codes.InvalidArgument, "private chat identity mismatch")
-		}
 		_, err = tx.Exec(ctx, store.Q("ensure_user"), u.Actor, u.Username, u.DisplayName)
 		if err == nil {
-			err = s.private(ctx, tx, u)
+			err = s.private(ctx, tx, u, replies)
 		}
 	}
+	if err != nil {
+		return nil, internal(err)
+	}
+	ids, err := updateReplies(ctx, tx, s.BotID, u.Id)
 	if err != nil {
 		return nil, internal(err)
 	}
 	if err = tx.Commit(ctx); err != nil {
 		return nil, internal(err)
 	}
-	return &pb.Receipt{}, nil
+	slog.InfoContext(ctx, "update.committed", "reply_count", len(ids), "content_rejected", !contentValid)
+	return &pb.Receipt{DeliveryIds: ids}, nil
 }
 
 type user struct {
@@ -176,12 +241,12 @@ func (s *Service) view(u user) *pb.View {
 	}
 	return v
 }
-func (s *Service) private(ctx context.Context, tx pgx.Tx, in *pb.Update) error {
+func (s *Service) private(ctx context.Context, tx pgx.Tx, in *pb.Update, replies *replies) error {
 	u, err := readUser(ctx, tx, in.Actor)
 	if err != nil {
 		return err
 	}
-	reply := func(v *pb.View) error { return enqueue(ctx, tx, in.Chat, false, "view", v, in.Actor, 0, 0) }
+	reply := func(v *pb.View) error { return replies.enqueue(ctx, tx, in.Chat, false, "view", v, in.Actor, 0, 0) }
 	source, isStart := startSource(in.Text)
 	isStart = isStart && in.Callback == ""
 	if isStart {
@@ -190,21 +255,21 @@ func (s *Service) private(ctx context.Context, tx pgx.Tx, in *pb.Update) error {
 		}
 	}
 	if strings.HasPrefix(in.Text, "/") {
-		handled, err := s.admin(ctx, tx, in, &u)
+		handled, err := s.admin(ctx, tx, in, &u, replies)
 		if handled || err != nil {
 			return err
 		}
 	}
 	if strings.HasPrefix(u.state, "broadcast_") && !isStart {
-		if !s.allowed(ctx, tx, in.Actor, "message_sender") {
-			return reply(&pb.View{Kind: "notice", Code: "denied"})
-		}
 		if in.Text == "/cancel" {
 			u.state = s.next(u.values)
 			if err = saveUser(ctx, tx, in.Actor, &u); err != nil {
 				return err
 			}
 			return reply(s.view(u))
+		}
+		if !s.allowed(ctx, tx, in.Actor, "message_sender") {
+			return nil
 		}
 		if in.MessageId <= 0 {
 			return reply(&pb.View{Kind: "notice", Code: "send_source"})
@@ -221,7 +286,7 @@ func (s *Service) private(ctx context.Context, tx pgx.Tx, in *pb.Update) error {
 		if err = saveUser(ctx, tx, in.Actor, &u); err != nil {
 			return err
 		}
-		if err = enqueue(ctx, tx, in.Chat, false, "copy", nil, in.Actor, in.Chat, in.MessageId); err != nil {
+		if err = replies.enqueue(ctx, tx, in.Chat, false, "copy", nil, in.Actor, in.Chat, in.MessageId); err != nil {
 			return err
 		}
 		return reply(&pb.View{Kind: "broadcast_preview", Numbers: []int64{id, count}})
@@ -308,6 +373,8 @@ func (s *Service) private(ctx context.Context, tx pgx.Tx, in *pb.Update) error {
 		}
 		value, err = domain.Normalize(field, value)
 		if err != nil {
+			// Both field and code are domain-controlled, never raw input.
+			slog.DebugContext(ctx, "validation.rejected", "code", err.Error())
 			return reply(&pb.View{Kind: "validation", Field: field, Code: err.Error()})
 		}
 		u.values[field] = value

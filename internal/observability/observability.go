@@ -2,6 +2,7 @@ package observability
 
 import (
 	"context"
+	"io"
 	"log/slog"
 	"os"
 	"time"
@@ -26,16 +27,20 @@ func (h handler) Handle(ctx context.Context, r slog.Record) error {
 }
 func (h handler) WithAttrs(a []slog.Attr) slog.Handler { return handler{h.Handler.WithAttrs(a)} }
 func (h handler) WithGroup(g string) slog.Handler      { return handler{h.Handler.WithGroup(g)} }
-func Init(ctx context.Context, service string) (func(context.Context) error, error) {
-	level := slog.LevelInfo
-	_ = level.UnmarshalText([]byte(os.Getenv("LOG_LEVEL")))
-	base := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level, ReplaceAttr: func(_ []string, a slog.Attr) slog.Attr {
+func newHandler(w io.Writer, level slog.Level) slog.Handler {
+	base := slog.NewJSONHandler(w, &slog.HandlerOptions{Level: level, ReplaceAttr: func(_ []string, a slog.Attr) slog.Attr {
 		if a.Key == slog.TimeKey {
 			return slog.String("time", a.Value.Time().UTC().Format(time.RFC3339Nano))
 		}
 		return a
 	}})
-	slog.SetDefault(slog.New(handler{base}).With("service", service))
+	return handler{base}
+}
+
+func Init(ctx context.Context, service string) (func(context.Context) error, error) {
+	level := slog.LevelInfo
+	_ = level.UnmarshalText([]byte(os.Getenv("LOG_LEVEL")))
+	slog.SetDefault(slog.New(newHandler(os.Stdout, level)).With("service", service))
 	otel.SetTextMapPropagator(propagation.TraceContext{})
 	// Export failures are optional infrastructure failures and never expose endpoint errors.
 	otel.SetErrorHandler(otel.ErrorHandlerFunc(func(error) { slog.Warn("telemetry export failed") }))

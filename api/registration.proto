@@ -4,6 +4,8 @@ option go_package = "registration.local/backend/api;api";
 
 service Registration {
   rpc Accept(Update) returns (Receipt);
+  // Discovery only, not a lease. Pass each ID through Claim/Complete.
+  rpc PendingInteractive(PendingInteractiveRequest) returns (Receipt);
   rpc Claim(ClaimRequest) returns (Delivery);
   rpc Complete(Completion) returns (Receipt);
   rpc Export(ExportRequest) returns (ExportResponse);
@@ -26,8 +28,20 @@ message Update {
   int64 member_id = 13;
   bool member_active = 14;
   string chat_title = 15;
+  // Trusted frontend attestation: callback message is accessible, text-only,
+  // authored by this bot in this chat (not inline, media or a user message).
+  bool callback_message_editable = 16;
 }
-message Receipt { bool duplicate = 1; }
+message Receipt {
+  bool duplicate = 1;
+  // Accept: stable ordered reply IDs, including on duplicate replay.
+  // PendingInteractive: due interactive head-of-chat IDs. Other RPCs: empty.
+  repeated int64 delivery_ids = 2;
+}
+message PendingInteractiveRequest {
+  // 0 uses 100; valid explicit range 1..100. No cursor: repeat after processing.
+  int32 limit = 1;
+}
 message Field { string key = 1; string value = 2; }
 message Button { string label_key = 1; string data = 2; }
 message View {
@@ -51,6 +65,9 @@ message Delivery {
   string traceparent = 9;
   int64 not_before_unix_ms = 10;
   bool group = 11;
+  // >0: edit this bot-authored text message in chat; 0: send a new message.
+  // Only eligible private callback view replies can set this field.
+  int64 edit_message_id = 12;
 }
 message Completion {
   int64 id = 1;

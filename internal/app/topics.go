@@ -42,7 +42,7 @@ func InitTopics(ctx context.Context) error {
 	defer admin.Close()
 	_ = admin.SetDeadline(time.Now().Add(15 * time.Second))
 	var topics []kafka.TopicConfig
-	for _, kind := range []string{"interactive", "broadcast"} {
+	for _, kind := range []string{"broadcast"} {
 		topics = append(topics, kafka.TopicConfig{Topic: prefix + "." + kind + ".v1", NumPartitions: 3, ReplicationFactor: 1, ConfigEntries: []kafka.ConfigEntry{{ConfigName: "retention.ms", ConfigValue: "604800000"}, {ConfigName: "retention.bytes", ConfigValue: "268435456"}, {ConfigName: "max.message.bytes", ConfigValue: "65536"}, {ConfigName: "min.insync.replicas", ConfigValue: "1"}}})
 	}
 	if err = admin.CreateTopics(topics...); err != nil {

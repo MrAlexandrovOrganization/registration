@@ -13,7 +13,19 @@ UPDATE users SET state=$2,version=version+1,name=NULLIF($3,''),birth_date=NULLIF
 -- name: allowed
 SELECT EXISTS(SELECT 1 FROM user_permissions WHERE telegram_id=$1 AND permission=$2);
 -- name: enqueue
-INSERT INTO outbound_messages(chat,is_group,priority,kind,body,actor,source_chat,source_message,traceparent) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9);
+INSERT INTO outbound_messages(chat,is_group,priority,kind,body,actor,source_chat,source_message,traceparent,update_bot_id,update_id,edit_message_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12);
+-- name: update_replies
+SELECT id FROM outbound_messages WHERE update_bot_id=$1 AND update_id=$2 ORDER BY id;
+-- name: operator
+SELECT EXISTS(SELECT 1 FROM user_permissions WHERE telegram_id=$1 AND permission IN ('admin','table_viewer','message_sender'));
+-- name: pending_interactive
+SELECT o.id FROM outbound_messages o WHERE o.priority='interactive'
+ AND o.status IN ('pending','retry_wait','sending') AND o.next_attempt_at<=now()
+ AND (o.status<>'sending' OR o.lease_until<now())
+ AND (o.broadcast_id IS NULL OR EXISTS(SELECT 1 FROM broadcasts b WHERE b.id=o.broadcast_id AND b.status='running'))
+ AND NOT EXISTS(SELECT 1 FROM runtime_state WHERE id=1 AND cooldown_until>now())
+ AND NOT EXISTS(SELECT 1 FROM outbound_messages prev WHERE prev.chat=o.chat AND prev.id<o.id AND prev.priority=o.priority AND prev.status IN ('pending','retry_wait','sending') AND (prev.broadcast_id IS NULL OR EXISTS(SELECT 1 FROM broadcasts b WHERE b.id=prev.broadcast_id AND b.status='running')))
+ ORDER BY o.next_attempt_at,o.id LIMIT $1;
 -- name: blocked
 UPDATE users SET is_blocked=$2,updated_at=now() WHERE telegram_id=$1;
 -- name: grant
@@ -56,7 +68,7 @@ UPDATE outbound_messages SET status='pending',attempts=0,published_at=NULL,next_
 -- name: broadcast_counts
 SELECT status,count(*) FROM outbound_messages WHERE broadcast_id=$1 GROUP BY status ORDER BY status;
 -- name: publish_due
-SELECT o.id,o.chat,o.priority,o.traceparent FROM outbound_messages o LEFT JOIN broadcasts b ON b.id=o.broadcast_id WHERE o.status IN ('pending','retry_wait','sending') AND o.next_attempt_at<=now() AND (o.status<>'sending' OR o.lease_until<now()) AND (o.published_at IS NULL OR o.published_at<now()-interval '30 seconds') AND (b.id IS NULL OR b.status='running') ORDER BY o.id LIMIT 100;
+SELECT o.id,o.chat,o.priority,o.traceparent FROM outbound_messages o LEFT JOIN broadcasts b ON b.id=o.broadcast_id WHERE o.priority='broadcast' AND o.status IN ('pending','retry_wait','sending') AND o.next_attempt_at<=now() AND (o.status<>'sending' OR o.lease_until<now()) AND (o.published_at IS NULL OR o.published_at<now()-interval '30 seconds') AND (b.id IS NULL OR b.status='running') ORDER BY o.id LIMIT 100;
 -- name: published
 UPDATE outbound_messages SET published_at=now() WHERE id=$1;
 -- name: claim
@@ -64,7 +76,7 @@ UPDATE outbound_messages o SET status='sending',lease=$2,lease_until=now()+inter
 WHERE o.id=$1 AND o.status IN ('pending','retry_wait','sending') AND (o.status<>'sending' OR o.lease_until<now()) AND o.next_attempt_at<=now()
 AND (o.broadcast_id IS NULL OR EXISTS(SELECT 1 FROM broadcasts b WHERE b.id=o.broadcast_id AND b.status='running'))
 AND NOT EXISTS(SELECT 1 FROM outbound_messages prev WHERE prev.chat=o.chat AND prev.id<o.id AND prev.priority=o.priority AND prev.status IN ('pending','retry_wait','sending') AND (prev.broadcast_id IS NULL OR EXISTS(SELECT 1 FROM broadcasts b WHERE b.id=prev.broadcast_id AND b.status='running')))
-RETURNING o.chat,o.kind,o.body,o.source_chat,o.source_message,o.actor,o.traceparent,o.is_group;
+RETURNING o.chat,o.kind,o.body,o.source_chat,o.source_message,o.actor,o.traceparent,o.is_group,o.edit_message_id;
 -- name: sender_lock
 UPDATE runtime_state SET sender_worker=$1,sender_until=now()+interval '90 seconds' WHERE id=1 AND (sender_until<now() OR sender_worker=$1) RETURNING GREATEST(0,ceil(EXTRACT(EPOCH FROM cooldown_until-clock_timestamp())*1000))::bigint;
 -- name: completion_lock
