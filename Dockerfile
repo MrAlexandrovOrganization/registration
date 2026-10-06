@@ -6,14 +6,10 @@ ARG GO_ALPINE_VERSION
 ARG ALPINE_VERSION
 FROM golang:${GO_VERSION}-alpine${GO_ALPINE_VERSION} AS build
 WORKDIR /src
-RUN apk add --no-cache make curl unzip gcompat libstdc++
+RUN apk add --no-cache make
 COPY go.mod go.sum Makefile versions.mk ./
 RUN go mod download
-RUN version="$(make -s versions | awk -F= '$1 == "PROTOC_VERSION" {print $2}')"; \
-    case "$(uname -m)" in x86_64) arch=x86_64 ;; aarch64) arch=aarch_64 ;; *) exit 1 ;; esac; \
-    curl -fsSL --retry 3 "https://github.com/protocolbuffers/protobuf/releases/download/v${version}/protoc-${version}-linux-${arch}.zip" -o /tmp/protoc.zip && \
-    unzip -q /tmp/protoc.zip -d /usr/local && rm /tmp/protoc.zip && \
-    make install-proto
+RUN make install-proto
 COPY . .
 RUN CGO_ENABLED=0 make build
 

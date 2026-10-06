@@ -5,17 +5,17 @@ include versions.mk
 .PHONY: install install-proto install-hooks run format check test test-race test-integration build proto-gen config-check migrate import-dry-run validate-data compose-build up down logs restart init-topics
 install: install-proto
 	go mod download
-	GOBIN=$(BIN) go install golang.org/x/tools/cmd/goimports@v$(GOIMPORTS_VERSION)
+	GOBIN="$(abspath $(BIN))" go install golang.org/x/tools/cmd/goimports@v$(GOIMPORTS_VERSION)
 	python3 -m venv .tools
 	.tools/bin/pip install --disable-pip-version-check -r requirements-tools.txt
 install-proto:
-	GOBIN=$(BIN) go install google.golang.org/protobuf/cmd/protoc-gen-go@$(PROTOC_GEN_GO_VERSION)
-	GOBIN=$(BIN) go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v$(PROTOC_GEN_GO_GRPC_VERSION)
+	GOBIN="$(abspath $(BIN))" go install github.com/bufbuild/buf/cmd/buf@v$(BUF_VERSION)
+	GOBIN="$(abspath $(BIN))" go install google.golang.org/protobuf/cmd/protoc-gen-go@$(PROTOC_GEN_GO_VERSION)
+	GOBIN="$(abspath $(BIN))" go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v$(PROTOC_GEN_GO_GRPC_VERSION)
 install-hooks:
 	python3 scripts/install_hooks.py
 proto-gen:
-	@test "$$(protoc --version)" = "libprotoc $(PROTOC_VERSION)" || { printf '%s\n' 'Install protoc $(PROTOC_VERSION)'; exit 1; }
-	PATH="$(BIN):$$PATH" protoc --go_out=. --go_opt=paths=source_relative --go-grpc_out=. --go-grpc_opt=paths=source_relative api/registration.proto
+	PATH="$(abspath $(BIN)):$$PATH" "$(BIN)/buf" generate
 run: proto-gen
 	go run ./cmd/registration serve
 format: proto-gen

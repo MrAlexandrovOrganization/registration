@@ -64,10 +64,26 @@ Go-коде менять не нужно. Номера идут подряд о�
 
 ## Разработка
 
-Prerequisites: Go и protoc из `make versions`, Python 3 с venv, Make, Docker Compose v2.
+Prerequisites: Go из `make versions`, Python 3 с venv/pip (в CI версия из
+`make versions`), Make; Docker Compose v2 для интеграционных/конфигурационных
+проверок и контейнеров. Эти системные инструменты устанавливаются вручную.
+Для установки нужен HTTPS-доступ к Go module proxy и PyPI.
+На Ubuntu (как runner CI `ubuntu-24.04`) установите Go нужной версии и пакеты
+`make ca-certificates python3-venv`, затем выполните `make install && make build`.
 `make install` загружает Go-зависимости по `go.sum`, устанавливает закреплённые
-Go-генераторы/goimports в `.bin`, pre-commit 4.2.0 и Ruff 0.11.13 в `.tools`
-(Python-зависимости закреплены в requirements-tools.txt). Hooks отдельно:
+Buf, Go-генераторы/goimports в `.bin`, pre-commit и Ruff в `.tools`
+(Python-зависимости закреплены в requirements-tools.txt). Hooks отдельно.
+
+Как в notes-bot, `make install-proto` — три команды `go install`: Buf и локальные
+`protoc-gen-go` / `protoc-gen-go-grpc`. Buf и gRPC plugin закреплены в `versions.mk`,
+версия Go protobuf plugin берётся из `go.mod`. Отдельный protoc не нужен.
+`make proto-gen` вызывает `buf generate`; минимальные `buf.yaml` и `buf.gen.yaml`
+сохраняют каноническое имя `api/registration.proto` и выходные файлы
+`api/registration.pb.go`, `api/registration_grpc.pb.go` (`paths=source_relative`).
+Make ставит `BIN` первым в PATH для локальных plugins. Можно задать
+`make install-proto BIN=/absolute/path/to/empty/bin` и использовать тот же BIN
+в `proto-gen`, build/test. Для локальной генерации Docker не нужен; build-stage
+Dockerfile и CI устанавливают инструменты через тот же Makefile.
 
 Как в notes-bot, generated protobuf не хранится в Git. `make build`, `test`,
 `test-race`, `check`, `format`, `run` и CLI-цели сначала выполняют `proto-gen`.

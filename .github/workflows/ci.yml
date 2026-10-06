@@ -19,10 +19,6 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ steps.versions.outputs.PYTHON_VERSION }}
-      - uses: arduino/setup-protoc@v3
-        with:
-          version: ${{ steps.versions.outputs.PROTOC_VERSION }}
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
       - run: make install
       - run: make check
       - run: make test-race
