@@ -7,6 +7,9 @@ service Registration {
   // Discovery only, not a lease. Pass each ID through Claim/Complete.
   rpc PendingInteractive(PendingInteractiveRequest) returns (Receipt);
   rpc Claim(ClaimRequest) returns (Delivery);
+  // Call only after all sender work and heartbeats have stopped. Owner-checked,
+  // idempotent; preserves delivery leases and the global Telegram cooldown.
+  rpc ReleaseSender(ReleaseSenderRequest) returns (ReleaseSenderResponse);
   rpc Complete(Completion) returns (Receipt);
   rpc Export(ExportRequest) returns (ExportResponse);
   rpc Members(MembersRequest) returns (MembersResponse);
@@ -53,6 +56,8 @@ message View {
   string code = 6;
 }
 message ClaimRequest { int64 id = 1; string worker = 2; }
+message ReleaseSenderRequest { string worker = 1; }
+message ReleaseSenderResponse { bool released = 1; }
 message Delivery {
   int64 id = 1;
   string lease = 2;

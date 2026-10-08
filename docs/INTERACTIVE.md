@@ -86,6 +86,20 @@ transport/configuration errors, and must not fabricate a successful receipt.
 
 ### Frontend sender
 
+`ReleaseSender(ReleaseSenderRequest{worker}) → ReleaseSenderResponse{released}`
+is an additive, authenticated RPC for graceful shutdown. Worker length is 8..100
+bytes, as for Claim. Stop and join all sender work (including heartbeats and
+Complete reporting) before calling it with a fresh bounded context. A process
+must never reuse its worker identity after release.
+
+The atomic update releases only the matching global sender owner. A missing or
+different owner returns `released=false`; repeat/late requests are harmless and
+cannot release a successor with a fresh identity. Cooldown, delivery leases and
+job statuses are preserved. Unreported deliveries recover through normal expiry.
+No schema migration is needed. Deploy backend first, then frontend; an older
+backend returns Unimplemented and frontend falls back to TTL recovery. The first
+replacement of an older frontend can still wait up to 90 seconds.
+
 1. After successful Accept, schedule returned IDs immediately into the common
    sender. Advance Telegram update acknowledgement after durable Accept, not
    after waiting for all Telegram sends. Recovery makes an in-memory queue loss

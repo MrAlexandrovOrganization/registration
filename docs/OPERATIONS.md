@@ -158,6 +158,19 @@ docker compose exec -T postgres pg_dump -U registration -d registration -Fc > /s
 
 ## Обновление контрактов
 
+### Быстрый штатный перезапуск frontend
+
+Для `ReleaseSender` сначала обновить backend через `make up`, затем frontend через
+его `make up`. Новая миграция не нужна. Старый frontend при первой замене ещё не
+освобождает lease, поэтому первый запуск новой версии может ждать до 90 секунд.
+При следующих штатных остановках новый frontend завершает sender и Complete,
+затем освобождает свой lease отдельным RPC (таймаут 5 секунд).
+В frontend-логах `sender lease cleanup completed` с `released=true` подтверждает
+освобождение; `sender lease acquired` — захват новым процессом. При SIGKILL,
+недоступном backend или старом backend без RPC действует прежний TTL.
+
+### Порядок обновления proto
+
 Канонический proto — `api/registration.proto` backend. Пока нет опубликованного
 Go-модуля, frontend хранит versioned snapshot того же proto и генерирует
 Go с переопределённым go_package при сборке. `*.pb.go` игнорируются Git.

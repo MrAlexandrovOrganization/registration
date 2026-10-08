@@ -79,6 +79,9 @@ AND NOT EXISTS(SELECT 1 FROM outbound_messages prev WHERE prev.chat=o.chat AND p
 RETURNING o.chat,o.kind,o.body,o.source_chat,o.source_message,o.actor,o.traceparent,o.is_group,o.edit_message_id;
 -- name: sender_lock
 UPDATE runtime_state SET sender_worker=$1,sender_until=now()+interval '90 seconds' WHERE id=1 AND (sender_until<now() OR sender_worker=$1) RETURNING GREATEST(0,ceil(EXTRACT(EPOCH FROM cooldown_until-clock_timestamp())*1000))::bigint;
+
+-- name: sender_release
+UPDATE runtime_state SET sender_worker='',sender_until='-infinity' WHERE id=1 AND sender_worker=$1;
 -- name: completion_lock
 SELECT chat,attempts,broadcast_id,kind,body,actor FROM outbound_messages WHERE id=$1 AND lease=$2 AND status='sending' AND lease_until>now() FOR UPDATE;
 -- name: complete
