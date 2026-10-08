@@ -85,7 +85,8 @@ func TestParticipationDisabled(t *testing.T) {
 	}
 	var version int64
 	must(db.QueryRow(ctx, "SELECT version FROM users WHERE telegram_id=42").Scan(&version))
-	if send(42, "", "c:"+strconv.FormatInt(version, 10)+":confirm").Kind != "registered" {
+	v = send(42, "", "c:"+strconv.FormatInt(version, 10)+":confirm")
+	if v.Kind != "registered" || v.Code != "registration_completed" {
 		t.Fatal("confirmation failed")
 	}
 	send(42, "", "p:0")

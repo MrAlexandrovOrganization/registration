@@ -103,11 +103,11 @@ func editTarget(u *pb.Update, view *pb.View) int64 {
 	}
 	switch view.Kind {
 	case "question":
-		// Phone questions may require a reply keyboard, which editMessageText cannot set.
+		// Both contact sharing and cancellation use the phone reply keyboard.
 		if view.Field == "phone" {
 			return 0
 		}
-	case "confirm", "registered", "edit":
+	case "confirm", "registered", "edit", "about", "bring":
 	default:
 		return 0
 	}
@@ -223,6 +223,7 @@ func (s *Service) view(u user) *pb.View {
 			v.Buttons = append(v.Buttons, s.button(u.version, "confirm", "confirm"))
 		}
 		v.Buttons = append(v.Buttons, s.button(u.version, "edit", "edit"))
+		v.Buttons = append(v.Buttons, s.infoButtons()...)
 	case "edit":
 		v.Kind = "edit"
 		for _, f := range domain.RegistrationFields(s.ParticipationEnabled) {
@@ -241,6 +242,14 @@ func (s *Service) view(u user) *pb.View {
 	}
 	return v
 }
+
+func (s *Service) infoButtons() []*pb.Button {
+	return []*pb.Button{
+		{LabelKey: "about_button", Data: "info:about"},
+		{LabelKey: "bring_button", Data: "info:bring"},
+	}
+}
+
 func (s *Service) private(ctx context.Context, tx pgx.Tx, in *pb.Update, replies *replies) error {
 	u, err := readUser(ctx, tx, in.Actor)
 	if err != nil {
@@ -259,6 +268,14 @@ func (s *Service) private(ctx context.Context, tx pgx.Tx, in *pb.Update, replies
 		if handled || err != nil {
 			return err
 		}
+	}
+	if in.Callback == "info:about" || in.Callback == "info:bring" {
+		v := &pb.View{Kind: strings.TrimPrefix(in.Callback, "info:")}
+		if !strings.HasPrefix(u.state, "broadcast_") {
+			v.Buttons = append(v.Buttons, s.button(u.version, "begin", "back_to_form"))
+		}
+		v.Buttons = append(v.Buttons, s.infoButtons()...)
+		return reply(v)
 	}
 	if strings.HasPrefix(u.state, "broadcast_") && !isStart {
 		if in.Text == "/cancel" {
@@ -308,7 +325,7 @@ func (s *Service) private(ctx context.Context, tx pgx.Tx, in *pb.Update, replies
 	}
 	action := ""
 	field := strings.TrimPrefix(u.state, "edit_")
-	if !s.ParticipationEnabled && (field == "will_drive" || field == "trip_attendance") {
+	if !isStart && !s.ParticipationEnabled && (field == "will_drive" || field == "trip_attendance") {
 		u.state = s.next(u.values)
 		if err = saveUser(ctx, tx, in.Actor, &u); err != nil {
 			return err
@@ -322,7 +339,10 @@ func (s *Service) private(ctx context.Context, tx pgx.Tx, in *pb.Update, replies
 		}
 		action = parts[2]
 	}
+	cancelPhoneEdit := u.state == "edit_phone" && (action == "cancel" || in.Text == "/cancel")
 	switch {
+	case action == "begin":
+		return reply(s.view(u))
 	case isStart || in.Text == "/cancel" || u.state == "new":
 		if u.state != "registered" || s.next(u.values) != "confirm" {
 			u.state = s.next(u.values)
@@ -367,7 +387,9 @@ func (s *Service) private(ctx context.Context, tx pgx.Tx, in *pb.Update, replies
 		}
 		if field == "phone" && in.Phone != "" {
 			if in.ContactOwner != in.Actor {
-				return reply(&pb.View{Kind: "notice", Code: "own_contact"})
+				v := s.view(u)
+				v.Kind, v.Code = "validation", "own_contact"
+				return reply(v)
 			}
 			value = in.Phone
 		}
@@ -375,7 +397,9 @@ func (s *Service) private(ctx context.Context, tx pgx.Tx, in *pb.Update, replies
 		if err != nil {
 			// Both field and code are domain-controlled, never raw input.
 			slog.DebugContext(ctx, "validation.rejected", "code", err.Error())
-			return reply(&pb.View{Kind: "validation", Field: field, Code: err.Error()})
+			v := s.view(u)
+			v.Kind, v.Code = "validation", err.Error()
+			return reply(v)
 		}
 		u.values[field] = value
 		u.state = s.next(u.values)
@@ -388,7 +412,25 @@ func (s *Service) private(ctx context.Context, tx pgx.Tx, in *pb.Update, replies
 			return err
 		}
 	}
-	return reply(s.view(u))
+	if isStart {
+		if err = reply(&pb.View{Kind: "welcome"}); err != nil {
+			return err
+		}
+	}
+	v := s.view(u)
+	if action == "confirm" && u.state == "registered" {
+		v.Code = "registration_completed"
+		v.Fields = nil
+	}
+	if err = reply(v); err != nil {
+		return err
+	}
+	if cancelPhoneEdit {
+		// Editing the questionnaire cannot remove a reply keyboard. A separate
+		// send-only notice clears it, including when the next view has inline buttons.
+		return reply(&pb.View{Kind: "notice", Code: "edit_cancelled"})
+	}
+	return nil
 }
 func (s *Service) milestones(ctx context.Context, tx pgx.Tx) error {
 	if !s.ParticipationEnabled {

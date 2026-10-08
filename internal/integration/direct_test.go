@@ -140,6 +140,9 @@ func TestDirectRecovery(t *testing.T) {
 	// Simulate a lost Accept response: replay returns the original durable IDs,
 	// including concurrently, without repeating mutation or creating jobs.
 	u, first := send(10, "/start")
+	if len(first.DeliveryIds) != 2 {
+		t.Fatal("start must persist greeting and first question")
+	}
 	var wg sync.WaitGroup
 	for range 8 {
 		wg.Go(func() {
@@ -168,6 +171,9 @@ func TestDirectRecovery(t *testing.T) {
 		t.Fatal("reply order bypassed")
 	}
 	d := claim(first.DeliveryIds[0])
+	if d.View.Kind != "welcome" || len(d.View.Buttons) != 0 {
+		t.Fatal("expected greeting without menu")
+	}
 	if slices.Contains(pending(0), d.Id) {
 		t.Fatal("active lease rediscovered")
 	}
@@ -204,6 +210,11 @@ func TestDirectRecovery(t *testing.T) {
 	if !slices.Equal(r.DeliveryIds, first.DeliveryIds) {
 		t.Fatal("completed replay changed IDs")
 	}
+	d = claim(first.DeliveryIds[1])
+	if d.Id == 0 || d.View.Kind != "question" || d.View.Field != "name" {
+		t.Fatal("greeting must be followed by name question without a callback")
+	}
+	complete(d, "sent")
 	if !slices.Contains(pending(0), second.DeliveryIds[0]) {
 		t.Fatal("next reply not unblocked")
 	}
@@ -218,7 +229,7 @@ func TestDirectRecovery(t *testing.T) {
 		t.Fatal("date not normalized")
 	}
 	exec("UPDATE outbound_messages SET status='sent'")
-	exec("UPDATE users SET state='confirm' WHERE telegram_id=10")
+	exec(`UPDATE users SET state='confirm',name='Fixture User',"group"='FIXTURE',phone='79991234567',expectations='Fixture',will_drive='Обязательно! 🤩',trip_attendance='Да, точно еду! ✅' WHERE telegram_id=10`)
 	must(db.QueryRow(ctx, "SELECT version FROM users WHERE telegram_id=10").Scan(&version))
 	callback := &pb.Update{Id: seq, Actor: 10, Chat: 10, ChatType: "private", Callback: "c:" + strconv.FormatInt(version, 10) + ":edit", MessageId: 42, CallbackMessageEditable: true}
 	seq++
@@ -229,6 +240,102 @@ func TestDirectRecovery(t *testing.T) {
 		t.Fatal("callback edit target lost")
 	}
 	complete(d, "sent")
+	var phoneAction string
+	for _, b := range d.View.Buttons {
+		if b.LabelKey == "phone" {
+			phoneAction = b.Data
+		}
+	}
+	if phoneAction == "" {
+		t.Fatal("missing phone edit button")
+	}
+	phoneUpdate := &pb.Update{Id: seq, Actor: 10, Chat: 10, ChatType: "private", Callback: phoneAction, MessageId: 42, CallbackMessageEditable: true}
+	seq++
+	r, err = client.Accept(auth, phoneUpdate)
+	must(err)
+	if len(r.DeliveryIds) != 1 {
+		t.Fatal("phone edit must persist a single question with its reply keyboard")
+	}
+	d = claim(r.DeliveryIds[0])
+	if d.EditMessageId != 0 || d.View.Kind != "question" || d.View.Field != "phone" || len(d.View.Buttons) != 1 || d.View.Buttons[0].LabelKey != "cancel" {
+		t.Fatal("phone question must be a new message with reply cancellation")
+	}
+	complete(d, "sent")
+	replay, err := client.Accept(auth, phoneUpdate)
+	must(err)
+	if !replay.Duplicate || !slices.Equal(replay.DeliveryIds, r.DeliveryIds) {
+		t.Fatal("phone edit replay changed deliveries")
+	}
+	r, err = client.Accept(auth, &pb.Update{Id: seq, Actor: 10, Chat: 10, ChatType: "private", Kind: "message", Phone: "79991234568", ContactOwner: 11})
+	seq++
+	must(err)
+	if len(r.DeliveryIds) != 1 {
+		t.Fatal("foreign contact must produce only one validation message")
+	}
+	d = claim(r.DeliveryIds[0])
+	if d.View.Kind != "validation" || d.View.Field != "phone" || d.View.Code != "own_contact" || len(d.View.Buttons) != 1 || d.View.Buttons[0].LabelKey != "cancel" {
+		t.Fatal("foreign contact must retain phone keyboard and cancellation")
+	}
+	complete(d, "sent")
+	_, r = send(10, "invalid phone")
+	if len(r.DeliveryIds) != 1 {
+		t.Fatal("validation must not send a separate contact prompt")
+	}
+	d = claim(r.DeliveryIds[0])
+	if d.View.Kind != "validation" || len(d.View.Buttons) != 1 || d.View.Buttons[0].LabelKey != "cancel" {
+		t.Fatal("phone validation lost reply cancellation button")
+	}
+	for _, id := range r.DeliveryIds {
+		if id != d.Id {
+			d = claim(id)
+		}
+		complete(d, "sent")
+	}
+	// Frontend maps the reply button label to the existing cancel command.
+	cancelUpdate := &pb.Update{Id: seq, Actor: 10, Chat: 10, ChatType: "private", Kind: "message", Text: "/cancel", MessageId: 43}
+	r, err = client.Accept(auth, cancelUpdate)
+	seq++
+	must(err)
+	if len(r.DeliveryIds) != 2 {
+		t.Fatal("phone cancellation must persist form and keyboard removal")
+	}
+	d = claim(r.DeliveryIds[0])
+	if d.EditMessageId != 0 || d.View.Kind != "confirm" || len(d.View.Buttons) == 0 {
+		t.Fatal("reply cancellation did not leave phone editing")
+	}
+	complete(d, "sent")
+	d = claim(r.DeliveryIds[1])
+	if d.EditMessageId != 0 || d.View.Kind != "notice" || d.View.Code != "edit_cancelled" || len(d.View.Buttons) != 0 {
+		t.Fatal("phone cancellation must send a keyboard-removal notice")
+	}
+	complete(d, "sent")
+	replay, err = client.Accept(auth, cancelUpdate)
+	must(err)
+	if !replay.Duplicate || !slices.Equal(replay.DeliveryIds, r.DeliveryIds) {
+		t.Fatal("phone cancellation replay changed deliveries")
+	}
+	var phoneAfter string
+	must(db.QueryRow(ctx, "SELECT phone FROM users WHERE telegram_id=10").Scan(&phoneAfter))
+	if phoneAfter != "79991234567" {
+		t.Fatal("cancellation changed the saved phone")
+	}
+	var stateBefore, stateAfter string
+	must(db.QueryRow(ctx, "SELECT state,version FROM users WHERE telegram_id=10").Scan(&stateBefore, &version))
+	for _, action := range []string{"info:about", "info:bring"} {
+		r, err = client.Accept(auth, &pb.Update{Id: seq, Actor: 10, Chat: 10, ChatType: "private", Callback: action, MessageId: 44, CallbackMessageEditable: true})
+		seq++
+		must(err)
+		d = claim(r.DeliveryIds[0])
+		if d.EditMessageId != 44 || "info:"+d.View.Kind != action {
+			t.Fatal("information menu did not edit message")
+		}
+		complete(d, "sent")
+	}
+	var versionAfter int64
+	must(db.QueryRow(ctx, "SELECT state,version FROM users WHERE telegram_id=10").Scan(&stateAfter, &versionAfter))
+	if stateAfter != stateBefore || versionAfter != version {
+		t.Fatal("information menu changed questionnaire state")
+	}
 
 	// Inaccessible and unknown commands commit dedup, but no outbox effects.
 	silent := func(actor int64, chat int64, chatType, command string) {
@@ -400,11 +507,12 @@ func TestDirectRecovery(t *testing.T) {
 	exec("INSERT INTO bot_chats(chat_id,chat_type) VALUES(-200,'staff')")
 	exec(`UPDATE users SET state='confirm',name='Fixture User',birth_date='10.03.2002',"group"='FIXTURE',phone='79991234567',expectations='Fixture',will_drive='Обязательно! 🤩',trip_attendance='Да, точно еду! ✅' WHERE telegram_id=10`)
 	must(db.QueryRow(ctx, "SELECT version FROM users WHERE telegram_id=10").Scan(&version))
-	r, err = client.Accept(auth, &pb.Update{Id: seq, Actor: 10, Chat: 10, ChatType: "private", Callback: "c:" + strconv.FormatInt(version, 10) + ":confirm"})
+	confirmation := &pb.Update{Id: seq, Actor: 10, Chat: 10, ChatType: "private", Callback: "c:" + strconv.FormatInt(version, 10) + ":confirm", MessageId: 45, CallbackMessageEditable: true}
+	r, err = client.Accept(auth, confirmation)
 	seq++
 	must(err)
 	if len(r.DeliveryIds) != 1 {
-		t.Fatal("milestone incorrectly linked as immediate reply")
+		t.Fatal("confirmation must produce one edit, excluding background milestones")
 	}
 	ids = pending(0)
 	if len(ids) != 2 {
@@ -412,8 +520,33 @@ func TestDirectRecovery(t *testing.T) {
 	}
 	for _, id := range ids {
 		d := claim(id)
+		if id == r.DeliveryIds[0] {
+			if d.View.Kind != "registered" || d.View.Code != "registration_completed" || d.EditMessageId != 45 || len(d.View.Fields) != 0 {
+				t.Fatal("confirmation must replace questionnaire with completion text")
+			}
+			labels := []string{}
+			for _, button := range d.View.Buttons {
+				labels = append(labels, button.LabelKey)
+			}
+			if !slices.Equal(labels, []string{"edit", "about_button", "bring_button"}) {
+				t.Fatal("completion must retain registered-user buttons")
+			}
+		}
 		if id != r.DeliveryIds[0] && (d.Chat != -200 || d.View.Kind != "milestone") {
 			t.Fatal("incorrect background milestone")
+		}
+		complete(d, "sent")
+	}
+	replay, err = client.Accept(auth, confirmation)
+	must(err)
+	if !replay.Duplicate || !slices.Equal(replay.DeliveryIds, r.DeliveryIds) {
+		t.Fatal("confirmation replay duplicated completion message")
+	}
+	_, r = send(10, "/start")
+	for _, id := range r.DeliveryIds {
+		d = claim(id)
+		if d.View.Code == "registration_completed" {
+			t.Fatal("reopening a registered form repeated completion message")
 		}
 		complete(d, "sent")
 	}
@@ -433,7 +566,7 @@ func TestDirectRecovery(t *testing.T) {
 	exec("ALTER TABLE outbound_messages DROP CONSTRAINT fixture_reject")
 	r, err = client.Accept(auth, u)
 	must(err)
-	if r.Duplicate || len(r.DeliveryIds) != 1 {
+	if r.Duplicate || len(r.DeliveryIds) != 2 {
 		t.Fatal("failed transaction not recoverable")
 	}
 	seq++
