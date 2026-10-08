@@ -59,7 +59,7 @@ func TestParticipationDisabled(t *testing.T) {
 	must(err)
 	defer db.Close()
 	must(store.Migrate(ctx, db))
-	_, err = db.Exec(ctx, `INSERT INTO users(telegram_id,state,name,birth_date,"group",phone,expectations,will_drive,trip_attendance) VALUES(42,'will_drive','Fixture','01.01.2000','TEST','79991234567','test','Пока думаю 🤔','Нет, не смогу 😢')`)
+	_, err = db.Exec(ctx, `INSERT INTO users(telegram_id,state,name,birth_date,"group",phone,expectations,will_drive,trip_attendance) VALUES(42,'will_drive','Fixture','01.01.2000','ИУ7-41','79991234567','test','Пока думаю 🤔','Нет, не смогу 😢')`)
 	must(err)
 	svc := &service.Service{DB: db, RootID: 101, BotID: 1000, Milestones: []int{1}}
 	seq := int64(1)

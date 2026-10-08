@@ -10,7 +10,7 @@ func TestNormalize(t *testing.T) {
 		field, input, want string
 		bad                bool
 	}{
-		{"phone", "8 (999) 123-45-67", "79991234567", false}, {"phone", "+12025550123", "12025550123", false},
+		{"phone", "8 (999) 123-45-67", "79991234567", false}, {"phone", "+12025550123", "", true},
 		{"phone", "abc1234567890", "", true}, {"birth_date", "29.02.2000", "29.02.2000", false}, {"birth_date", "29.02.2001", "", true},
 		{"birth_date", "01.01.2999", "", true}, {"group", " рк6-56б ", "РК6-56Б", false},
 		{"birth_date", "10.3.2002", "10.03.2002", false},
@@ -50,7 +50,7 @@ func TestNextDoesNotAcceptMissingOrInvalid(t *testing.T) {
 }
 
 func TestRegistrationWithoutParticipation(t *testing.T) {
-	values := map[string]string{"name": "Fixture User", "birth_date": "01.01.2000", "group": "test", "phone": "79991234567", "expectations": "test"}
+	values := map[string]string{"name": "Fixture User", "birth_date": "01.01.2000", "group": "ИУ7-41", "phone": "79991234567", "expectations": "test"}
 	if NextRegistration(values, false) != "confirm" {
 		t.Fatal("disabled questions still required")
 	}

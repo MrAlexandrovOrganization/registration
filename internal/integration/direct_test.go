@@ -229,7 +229,7 @@ func TestDirectRecovery(t *testing.T) {
 		t.Fatal("date not normalized")
 	}
 	exec("UPDATE outbound_messages SET status='sent'")
-	exec(`UPDATE users SET state='confirm',name='Fixture User',"group"='FIXTURE',phone='79991234567',expectations='Fixture',will_drive='Обязательно! 🤩',trip_attendance='Да, точно еду! ✅' WHERE telegram_id=10`)
+	exec(`UPDATE users SET state='confirm',name='Fixture User',"group"='ИУ7-41',phone='79991234567',expectations='Fixture',will_drive='Обязательно! 🤩',trip_attendance='Да, точно еду! ✅' WHERE telegram_id=10`)
 	must(db.QueryRow(ctx, "SELECT version FROM users WHERE telegram_id=10").Scan(&version))
 	callback := &pb.Update{Id: seq, Actor: 10, Chat: 10, ChatType: "private", Callback: "c:" + strconv.FormatInt(version, 10) + ":edit", MessageId: 42, CallbackMessageEditable: true}
 	seq++
@@ -505,7 +505,7 @@ func TestDirectRecovery(t *testing.T) {
 
 	// Milestones are background jobs, not reply IDs, and recover without Kafka.
 	exec("INSERT INTO bot_chats(chat_id,chat_type) VALUES(-200,'staff')")
-	exec(`UPDATE users SET state='confirm',name='Fixture User',birth_date='10.03.2002',"group"='FIXTURE',phone='79991234567',expectations='Fixture',will_drive='Обязательно! 🤩',trip_attendance='Да, точно еду! ✅' WHERE telegram_id=10`)
+	exec(`UPDATE users SET state='confirm',name='Fixture User',birth_date='10.03.2002',"group"='ИУ7-41',phone='79991234567',expectations='Fixture',will_drive='Обязательно! 🤩',trip_attendance='Да, точно еду! ✅' WHERE telegram_id=10`)
 	must(db.QueryRow(ctx, "SELECT version FROM users WHERE telegram_id=10").Scan(&version))
 	confirmation := &pb.Update{Id: seq, Actor: 10, Chat: 10, ChatType: "private", Callback: "c:" + strconv.FormatInt(version, 10) + ":confirm", MessageId: 45, CallbackMessageEditable: true}
 	r, err = client.Accept(auth, confirmation)

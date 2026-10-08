@@ -28,6 +28,9 @@ var phone = regexp.MustCompile(`^\+?[0-9 ()-]+$`)
 var digits = regexp.MustCompile(`\D`)
 var birthDate = regexp.MustCompile(`^[0-9]{1,2}\.[0-9]{1,2}\.[0-9]{4}$`)
 
+// Preserve the legacy group structure; normalize case before checking it.
+var group = regexp.MustCompile(`^[А-Я]{1,5}[0-9]{0,2}[СИЦ]?-([1-9]|1[0-6])[1-9][АБМТ]?В?$`)
+
 func Normalize(field, value string) (string, error) {
 	value = strings.TrimSpace(value)
 	if value == "" || utf8.RuneCountInString(value) > 500 {
@@ -55,14 +58,14 @@ func Normalize(field, value string) (string, error) {
 		if len(value) == 11 && value[0] == '8' {
 			value = "7" + value[1:]
 		}
-		if len(value) < 10 || len(value) > 15 {
+		if len(value) != 11 || value[0] != '7' {
 			return "", errors.New("invalid_phone")
 		}
 	case "group":
-		if utf8.RuneCountInString(value) > 80 {
-			return "", errors.New("invalid_value")
-		}
 		value = strings.ToUpper(value)
+		if !group.MatchString(value) {
+			return "", errors.New("invalid_group")
+		}
 	case "expectations":
 	case "will_drive", "trip_attendance":
 		if slices.Contains(Options[field], value) {
