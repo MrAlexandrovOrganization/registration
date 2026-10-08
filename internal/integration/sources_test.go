@@ -56,7 +56,7 @@ func TestFirstStarts(t *testing.T) {
 	exec("ALTER TABLE milestone_notifications ADD PRIMARY KEY(epoch,threshold)")
 	exec("INSERT INTO milestone_notifications(epoch,threshold) VALUES(1,25),(2,25),(2,50)")
 	exec("DELETE FROM schema_migrations WHERE version>=2")
-	exec("INSERT INTO users(telegram_id) VALUES(10)")
+	exec("INSERT INTO users(telegram_id) VALUES(10),(11)")
 	if store.CheckSchema(ctx, db) == nil {
 		t.Fatal("old schema accepted")
 	}
@@ -86,7 +86,7 @@ func TestFirstStarts(t *testing.T) {
 		must(db.QueryRow(ctx, "SELECT source,started_at FROM first_starts WHERE telegram_id=$1", actor).Scan(&source, &started))
 		if want == nil {
 			if source != nil || started != nil {
-				t.Fatal("historical user attributed to a new link")
+				t.Fatal("expected unknown source and timestamp")
 			}
 			return time.Time{}
 		}
@@ -96,8 +96,23 @@ func TestFirstStarts(t *testing.T) {
 		return *started
 	}
 	tag, direct := "website", ""
-	send(10, "/start website")
+	send(10, "/start")
 	check(10, nil)
+	send(10, "/start invalid.payload")
+	check(10, nil)
+	check(11, nil)
+	historical := send(10, "/start website")
+	historicalAt := check(10, &tag)
+	historicalReceipt, err := svc.Accept(ctx, historical)
+	must(err)
+	if !historicalReceipt.Duplicate {
+		t.Fatal("historical update not deduplicated")
+	}
+	send(10, "/start other")
+	send(10, "/start")
+	if !check(10, &tag).Equal(historicalAt) {
+		t.Fatal("historical first tagged timestamp overwritten")
+	}
 	first := send(20, "/start website")
 	at := check(20, &tag)
 	receipt, err := svc.Accept(ctx, first)
@@ -189,7 +204,7 @@ func TestFirstStarts(t *testing.T) {
 	for _, f := range v.Fields {
 		counts[f.Key] = f.Value
 	}
-	if v.Kind != "sources" || counts[tag] != "2" || counts[""] != "2" || counts[":unknown"] != "1" || len(counts) != 5 {
+	if v.Kind != "sources" || counts[tag] != "3" || counts[""] != "2" || counts[":unknown"] != "1" || len(counts) != 5 {
 		t.Fatal("wrong source counts", v)
 	}
 	for i := range 22 {
@@ -226,7 +241,7 @@ func TestFirstStarts(t *testing.T) {
 		t.Fatal("missing export source header")
 	}
 	for _, row := range rows[1:] {
-		if row[0] == "20" && (row[12] != tag || row[13] != "tagged" || len(row) != 15) {
+		if (row[0] == "10" || row[0] == "20") && (row[12] != tag || row[13] != "tagged" || len(row) != 15) {
 			t.Fatal("wrong exported source", row)
 		}
 	}

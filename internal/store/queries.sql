@@ -3,7 +3,9 @@ INSERT INTO processed_updates(bot_id,update_id) VALUES($1,$2) ON CONFLICT DO NOT
 -- name: ensure_user
 INSERT INTO users(telegram_id,username,telegram_sername) VALUES($1,NULLIF($2,''),NULLIF($3,'')) ON CONFLICT(telegram_id) DO UPDATE SET username=EXCLUDED.username,telegram_sername=EXCLUDED.telegram_sername,is_blocked=0;
 -- name: record_first_start
-INSERT INTO first_starts(telegram_id,source,started_at) VALUES($1,$2,now()) ON CONFLICT(telegram_id) DO NOTHING;
+INSERT INTO first_starts(telegram_id,source,started_at) VALUES($1,$2,now())
+ON CONFLICT(telegram_id) DO UPDATE SET source=EXCLUDED.source,started_at=EXCLUDED.started_at
+WHERE first_starts.source IS NULL AND EXCLUDED.source<>'';
 -- name: sources
 SELECT COALESCE(source,':unknown'),count(*) FROM first_starts GROUP BY source ORDER BY source NULLS FIRST LIMIT 21 OFFSET $1;
 -- name: user
