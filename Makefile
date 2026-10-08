@@ -39,6 +39,9 @@ test-race: proto-gen
 	go test -race ./... -count=1 -timeout=180s
 test-integration: proto-gen
 	python3 scripts/test_integration.py
+.PHONY: benchmark
+benchmark: proto-gen
+	python3 scripts/benchmark.py
 .PHONY: test-compose
 test-compose:
 	python3 scripts/test_compose.py
@@ -70,6 +73,8 @@ init-topics: proto-gen
 	go run ./cmd/registration init-topics
 secrets-check:
 	python3 scripts/check_secrets.py
+clear:
+	$(DOCKER_COMPOSE) down -v
 
 .PHONY: versions
 versions:

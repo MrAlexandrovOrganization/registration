@@ -100,6 +100,9 @@ Go-коде менять не нужно. Номера идут подряд о�
 
 ## Разработка
 
+Локальные измерения gRPC Accept с временной PostgreSQL: `make benchmark`.
+Сценарий, ограничения и результаты — [PERFORMANCE.md](docs/PERFORMANCE.md).
+
 Prerequisites: Go из `make versions`, Python 3 с venv/pip (в CI версия из
 `make versions`), Make; Docker Compose v2 для интеграционных/конфигурационных
 проверок и контейнеров. Эти системные инструменты устанавливаются вручную.
