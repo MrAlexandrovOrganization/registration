@@ -73,8 +73,6 @@ init-topics: proto-gen
 	go run ./cmd/registration init-topics
 secrets-check:
 	python3 scripts/check_secrets.py
-clear:
-	$(DOCKER_COMPOSE) down -v
 
 .PHONY: versions
 versions:
