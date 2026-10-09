@@ -615,9 +615,45 @@ func TestDirectRecovery(t *testing.T) {
 	if surveyCallback("option_0").View.Kind != "confirm" || surveyCallback("confirm").View.Kind != "registered" {
 		t.Fatal("edit and reconfirm flow changed")
 	}
-	// Even returning to ordinary field collection cannot duplicate a stored reminder.
-	exec("UPDATE users SET state='trip_attendance',trip_attendance=NULL WHERE telegram_id=10")
-	surveyCallback("option_0")
+	// A cleared field restarts collection via /start, even with an older pinned
+	// reminder. Completing that collection must send and pin a fresh reminder.
+	exec(`UPDATE users SET "group"=NULL WHERE telegram_id=10`)
+	_, r = send(10, "/start")
+	for _, id := range r.DeliveryIds {
+		d = claim(id)
+		if d.View.Kind != "welcome" && (d.View.Kind != "question" || d.View.Field != "group") {
+			t.Fatal("start must request the cleared group")
+		}
+		complete(d, "sent")
+	}
+	u, r = send(10, "ИУ7-41")
+	if len(r.DeliveryIds) != 2 {
+		t.Fatal("refilling group must send a new reminder and questionnaire")
+	}
+	d = claim(r.DeliveryIds[0])
+	if d.Kind != "registration_completed" || d.EditMessageId != 0 {
+		t.Fatal("old reminder suppressed new registration completion")
+	}
+	_, err = client.Complete(auth, &pb.Completion{Id: d.Id, Lease: d.Lease, Outcome: "sent", TelegramMessageId: 888})
+	must(err)
+	if claim(r.DeliveryIds[1]).Id != 0 {
+		t.Fatal("questionnaire overtook new pin")
+	}
+	d = claim(r.DeliveryIds[0])
+	if d.Kind != "pin" || d.SourceMessage != 888 {
+		t.Fatal("new reminder was not scheduled for pinning")
+	}
+	complete(d, "sent")
+	d = claim(r.DeliveryIds[1])
+	if d.View.Kind != "confirm" || d.EditMessageId != 0 {
+		t.Fatal("refilled questionnaire must follow new pin")
+	}
+	complete(d, "sent")
+	replay, err = client.Accept(auth, u)
+	must(err)
+	if !replay.Duplicate || !slices.Equal(replay.DeliveryIds, r.DeliveryIds) {
+		t.Fatal("refilled answer replay duplicated reminder")
+	}
 	surveyCallback("confirm")
 	_, r = send(10, "/start")
 	for _, id := range r.DeliveryIds {

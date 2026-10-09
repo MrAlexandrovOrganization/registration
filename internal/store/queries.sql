@@ -92,8 +92,6 @@ UPDATE outbound_messages SET status=$3,attempts=attempts+$4,next_attempt_at=now(
 UPDATE runtime_state SET cooldown_until=GREATEST(cooldown_until,now()+make_interval(secs=>$1)) WHERE id=1;
 -- name: prepare_registration_pin
 UPDATE outbound_messages SET kind='pin',status='pending',source_message=$2,attempts=0 WHERE id=$1;
--- name: registration_reminder_exists
-SELECT EXISTS(SELECT 1 FROM outbound_messages WHERE chat=$1 AND priority='interactive' AND body->>'code'='registration_completed');
 -- name: export
 SELECT u.telegram_id,state,COALESCE(username,''),COALESCE(telegram_sername,''),COALESCE(name,''),COALESCE(birth_date,''),COALESCE("group",''),COALESCE(phone,''),COALESCE(expectations,''),COALESCE(will_drive,''),COALESCE(trip_attendance,''),is_staff,is_counselor,is_blocked,
  COALESCE(f.source,''),CASE WHEN f.telegram_id IS NULL THEN 'not_started' WHEN f.source IS NULL THEN 'unknown' WHEN f.source='' THEN 'direct' ELSE 'tagged' END,

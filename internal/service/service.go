@@ -423,15 +423,6 @@ func (s *Service) private(ctx context.Context, tx pgx.Tx, in *pb.Update, replies
 	}
 	v := s.view(u)
 	if completedLastField {
-		// The user row is locked for this transaction. Include earlier versions'
-		// completion views and pin stages so an existing reminder is not repeated.
-		var alreadyQueued bool
-		if err = tx.QueryRow(ctx, store.Q("registration_reminder_exists"), in.Chat).Scan(&alreadyQueued); err != nil {
-			return err
-		}
-		if alreadyQueued {
-			return reply(v)
-		}
 		// Keep the permanent reminder separate from the editable questionnaire.
 		// Completion of this send durably transitions the same job to pinning,
 		// keeping the following questionnaire behind it in chat order.
