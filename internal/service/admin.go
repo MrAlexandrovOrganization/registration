@@ -16,7 +16,7 @@ import (
 
 func audienceValid(v string) bool {
 	switch v {
-	case "all", "registered", "incomplete", "yes", "maybe", "staff", "counselor":
+	case "all", "registered", "incomplete", "yes", "maybe", "staff", "counselor", "non_counselor":
 		return true
 	}
 	return false

@@ -65,7 +65,7 @@ func TestParticipationDisabled(t *testing.T) {
 	seq := int64(1)
 	send := func(actor int64, text, callback string) *pb.View {
 		t.Helper()
-		_, err := svc.Accept(ctx, &pb.Update{Id: seq, Actor: actor, Chat: actor, ChatType: "private", Text: text, Callback: callback})
+		_, err := svc.Accept(ctx, &pb.Update{Id: seq, MessageId: seq, Actor: actor, Chat: actor, ChatType: "private", Text: text, Callback: callback})
 		seq++
 		must(err)
 		var body []byte
@@ -140,6 +140,27 @@ func TestParticipationDisabled(t *testing.T) {
 	}
 	if len(rows[0]) != 15 {
 		t.Fatal("wrong export column count")
+	}
+	{
+		// Cover both role values and blocked values; staff and incomplete users
+		// without the counselor flag must still receive the broadcast.
+		_, err := db.Exec(ctx, `UPDATE users SET is_counselor=1 WHERE telegram_id=101;
+			INSERT INTO users(telegram_id,state,is_counselor,is_blocked,is_staff) VALUES
+			(201,'new',0,0,1), (202,'registered',1,0,0),
+			(203,'registered',0,1,0), (204,'registered',1,1,0)`)
+		must(err)
+		send(101, "/broadcast non_counselor", "")
+		preview := send(101, "Synthetic broadcast", "")
+		if preview.Kind != "broadcast_preview" || len(preview.Numbers) != 2 || preview.Numbers[1] != 2 {
+			t.Fatalf("unexpected preview: %v", preview)
+		}
+		id := preview.Numbers[0]
+		send(101, "/send "+strconv.FormatInt(id, 10), "")
+		var recipients string
+		must(db.QueryRow(ctx, "SELECT string_agg(chat::text, ',' ORDER BY chat) FROM outbound_messages WHERE broadcast_id=$1", id).Scan(&recipients))
+		if recipients != "42,201" {
+			t.Fatalf("unexpected recipients: %s", recipients)
+		}
 	}
 	_, err = db.Exec(ctx, `UPDATE users SET state='new',will_drive=NULL,trip_attendance=NULL WHERE telegram_id=42`)
 	must(err)
