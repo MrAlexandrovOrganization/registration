@@ -162,8 +162,19 @@ func (s *Service) Complete(ctx context.Context, r *pb.Completion) (*pb.Receipt, 
 		return nil, internal(err)
 	}
 	state, increment, delay, code := RetryPolicy(r.Outcome, attempts, r.RetryAfterSeconds)
+	if kind == "registration_completed" && r.Outcome == "sent" && r.TelegramMessageId <= 0 {
+		return nil, status.Error(codes.InvalidArgument, "missing sent message id")
+	}
 	if _, err = tx.Exec(ctx, store.Q("complete"), r.Id, r.Lease, state, increment, float64(delay), r.TelegramMessageId, code); err != nil {
 		return nil, internal(err)
+	}
+	if kind == "registration_completed" && r.Outcome == "sent" {
+		// Atomic with completion: recovery retries only pinChatMessage, never
+		// resends a reminder whose Telegram message ID has been persisted.
+		if _, err = tx.Exec(ctx, store.Q("prepare_registration_pin"), r.Id, r.TelegramMessageId); err != nil {
+			return nil, internal(err)
+		}
+		state = "pending"
 	}
 	if r.Outcome == "rate_limit" {
 		if _, err = tx.Exec(ctx, store.Q("cooldown"), float64(delay)); err != nil {

@@ -503,45 +503,122 @@ func TestDirectRecovery(t *testing.T) {
 	}
 	complete(d, "sent")
 
-	// Milestones are background jobs, not reply IDs, and recover without Kafka.
+	// Filling the last field sends the permanent reminder before confirmation.
 	exec("INSERT INTO bot_chats(chat_id,chat_type) VALUES(-200,'staff')")
-	exec(`UPDATE users SET state='confirm',name='Fixture User',birth_date='10.03.2002',"group"='ИУ7-41',phone='79991234567',expectations='Fixture',will_drive='Обязательно! 🤩',trip_attendance='Да, точно еду! ✅' WHERE telegram_id=10`)
+	exec(`UPDATE users SET state='trip_attendance',name='Fixture User',birth_date='10.03.2002',"group"='ИУ7-41',phone='79991234567',expectations='Fixture',will_drive='Обязательно! 🤩',trip_attendance=NULL WHERE telegram_id=10`)
 	must(db.QueryRow(ctx, "SELECT version FROM users WHERE telegram_id=10").Scan(&version))
-	confirmation := &pb.Update{Id: seq, Actor: 10, Chat: 10, ChatType: "private", Callback: "c:" + strconv.FormatInt(version, 10) + ":confirm", MessageId: 45, CallbackMessageEditable: true}
+	lastAnswer := &pb.Update{Id: seq, Actor: 10, Chat: 10, ChatType: "private", Callback: "c:" + strconv.FormatInt(version, 10) + ":option_0", MessageId: 45, CallbackMessageEditable: true}
+	r, err = client.Accept(auth, lastAnswer)
+	seq++
+	must(err)
+	if len(r.DeliveryIds) != 2 {
+		t.Fatal("last answer must produce reminder and questionnaire")
+	}
+	ids = pending(0)
+	if len(ids) != 1 || ids[0] != r.DeliveryIds[0] {
+		t.Fatal("only the reminder should be ready before confirmation")
+	}
+	for _, id := range ids {
+		d := claim(id)
+		if id == r.DeliveryIds[0] {
+			if d.Kind != "registration_completed" || d.View.Code != "registration_completed" || d.EditMessageId != 0 || len(d.View.Fields) != 0 || len(d.View.Buttons) != 0 {
+				t.Fatal("completion must be a separate permanent reminder")
+			}
+			if claim(r.DeliveryIds[1]).Id != 0 {
+				t.Fatal("questionnaire overtook reminder")
+			}
+			_, err = client.Complete(auth, &pb.Completion{Id: d.Id, Lease: d.Lease, Outcome: "sent", TelegramMessageId: 777})
+			must(err)
+			_, err = client.Complete(auth, &pb.Completion{Id: d.Id, Lease: d.Lease, Outcome: "sent", TelegramMessageId: 777})
+			if status.Code(err) != codes.FailedPrecondition {
+				t.Fatal("old send completion must not complete pin stage")
+			}
+			if claim(r.DeliveryIds[1]).Id != 0 {
+				t.Fatal("questionnaire overtook pinning")
+			}
+			d = claim(id)
+			if d.Kind != "pin" || d.SourceMessage != 777 || d.EditMessageId != 0 {
+				t.Fatal("pin stage must recover the persisted message ID")
+			}
+			complete(d, "transient")
+			exec("UPDATE outbound_messages SET next_attempt_at=now() WHERE id=$1", id)
+			if claim(r.DeliveryIds[1]).Id != 0 {
+				t.Fatal("questionnaire overtook pin retry")
+			}
+			d = claim(id)
+			if d.Kind != "pin" || d.SourceMessage != 777 {
+				t.Fatal("pin retry must not resend reminder")
+			}
+		}
+		complete(d, "sent")
+	}
+	d = claim(r.DeliveryIds[1])
+	if d.Kind != "view" || d.View.Kind != "confirm" || d.View.Code != "" || d.EditMessageId != 0 || len(d.View.Fields) != 7 {
+		t.Fatal("questionnaire must be sent after pinning with all saved fields")
+	}
+	labels := []string{}
+	for _, button := range d.View.Buttons {
+		labels = append(labels, button.LabelKey)
+	}
+	if !slices.Equal(labels, []string{"confirm", "edit", "about_button", "bring_button"}) {
+		t.Fatal("questionnaire must retain editing and information buttons")
+	}
+	complete(d, "sent")
+	replay, err = client.Accept(auth, lastAnswer)
+	must(err)
+	if !replay.Duplicate || !slices.Equal(replay.DeliveryIds, r.DeliveryIds) {
+		t.Fatal("last answer replay duplicated completion message")
+	}
+	// Confirmation only updates the questionnaire; milestones remain background.
+	must(db.QueryRow(ctx, "SELECT version FROM users WHERE telegram_id=10").Scan(&version))
+	confirmation := &pb.Update{Id: seq, Actor: 10, Chat: 10, ChatType: "private", Callback: "c:" + strconv.FormatInt(version, 10) + ":confirm", MessageId: 778, CallbackMessageEditable: true}
 	r, err = client.Accept(auth, confirmation)
 	seq++
 	must(err)
 	if len(r.DeliveryIds) != 1 {
-		t.Fatal("confirmation must produce one edit, excluding background milestones")
+		t.Fatal("confirmation repeated reminder")
 	}
 	ids = pending(0)
 	if len(ids) != 2 {
 		t.Fatal("milestone not recoverable")
 	}
 	for _, id := range ids {
-		d := claim(id)
+		d = claim(id)
 		if id == r.DeliveryIds[0] {
-			if d.View.Kind != "registered" || d.View.Code != "registration_completed" || d.EditMessageId != 45 || len(d.View.Fields) != 0 {
-				t.Fatal("confirmation must replace questionnaire with completion text")
+			if d.Kind != "view" || d.View.Kind != "registered" || d.View.Code != "" || d.EditMessageId != 778 {
+				t.Fatal("confirmation must only edit questionnaire")
 			}
-			labels := []string{}
-			for _, button := range d.View.Buttons {
-				labels = append(labels, button.LabelKey)
-			}
-			if !slices.Equal(labels, []string{"edit", "about_button", "bring_button"}) {
-				t.Fatal("completion must retain registered-user buttons")
-			}
-		}
-		if id != r.DeliveryIds[0] && (d.Chat != -200 || d.View.Kind != "milestone") {
+		} else if d.Chat != -200 || d.View.Kind != "milestone" {
 			t.Fatal("incorrect background milestone")
 		}
 		complete(d, "sent")
 	}
-	replay, err = client.Accept(auth, confirmation)
-	must(err)
-	if !replay.Duplicate || !slices.Equal(replay.DeliveryIds, r.DeliveryIds) {
-		t.Fatal("confirmation replay duplicated completion message")
+	// Editing and confirming again must never resend the permanent reminder.
+	surveyCallback := func(action string) *pb.Delivery {
+		t.Helper()
+		must(db.QueryRow(ctx, "SELECT version FROM users WHERE telegram_id=10").Scan(&version))
+		receipt, err := client.Accept(auth, &pb.Update{Id: seq, Actor: 10, Chat: 10, ChatType: "private", Callback: "c:" + strconv.FormatInt(version, 10) + ":" + action, MessageId: 778, CallbackMessageEditable: true})
+		seq++
+		must(err)
+		if len(receipt.DeliveryIds) != 1 {
+			t.Fatal("editing or reconfirmation repeated reminder")
+		}
+		job := claim(receipt.DeliveryIds[0])
+		if job.Kind != "view" || job.View.Code == "registration_completed" {
+			t.Fatal("unexpected reminder while editing")
+		}
+		complete(job, "sent")
+		return job
 	}
+	surveyCallback("edit")
+	surveyCallback("edit_trip_attendance")
+	if surveyCallback("option_0").View.Kind != "confirm" || surveyCallback("confirm").View.Kind != "registered" {
+		t.Fatal("edit and reconfirm flow changed")
+	}
+	// Even returning to ordinary field collection cannot duplicate a stored reminder.
+	exec("UPDATE users SET state='trip_attendance',trip_attendance=NULL WHERE telegram_id=10")
+	surveyCallback("option_0")
+	surveyCallback("confirm")
 	_, r = send(10, "/start")
 	for _, id := range r.DeliveryIds {
 		d = claim(id)

@@ -72,8 +72,9 @@ func enqueue(ctx context.Context, tx pgx.Tx, chat int64, group bool, kind string
 // replies associates immediate effects with their durable inbound update.
 // Background effects intentionally have no inbound association.
 type replies struct {
-	botID  int64
-	update *pb.Update
+	botID    int64
+	update   *pb.Update
+	sendOnly bool
 }
 
 func (r *replies) enqueue(ctx context.Context, tx pgx.Tx, chat int64, group bool, kind string, view *pb.View, actor, sourceChat, sourceMessage int64) error {
@@ -89,7 +90,7 @@ func (r *replies) enqueue(ctx context.Context, tx pgx.Tx, chat int64, group bool
 	var editID int64
 	if r != nil {
 		botID, updateID = &r.botID, &r.update.Id
-		if chat == r.update.Chat && !group && kind == "view" {
+		if !r.sendOnly && chat == r.update.Chat && !group && kind == "view" {
 			editID = editTarget(r.update, view)
 		}
 	}
@@ -340,6 +341,7 @@ func (s *Service) private(ctx context.Context, tx pgx.Tx, in *pb.Update, replies
 		action = parts[2]
 	}
 	cancelPhoneEdit := u.state == "edit_phone" && (action == "cancel" || in.Text == "/cancel")
+	completedLastField := false
 	switch {
 	case action == "begin":
 		return reply(s.view(u))
@@ -402,7 +404,9 @@ func (s *Service) private(ctx context.Context, tx pgx.Tx, in *pb.Update, replies
 			return reply(v)
 		}
 		u.values[field] = value
+		editing := strings.HasPrefix(u.state, "edit_")
 		u.state = s.next(u.values)
+		completedLastField = !editing && u.state == "confirm"
 	}
 	if err = saveUser(ctx, tx, in.Actor, &u); err != nil {
 		return err
@@ -418,9 +422,25 @@ func (s *Service) private(ctx context.Context, tx pgx.Tx, in *pb.Update, replies
 		}
 	}
 	v := s.view(u)
-	if action == "confirm" && u.state == "registered" {
-		v.Code = "registration_completed"
-		v.Fields = nil
+	if completedLastField {
+		// The user row is locked for this transaction. Include earlier versions'
+		// completion views and pin stages so an existing reminder is not repeated.
+		var alreadyQueued bool
+		if err = tx.QueryRow(ctx, store.Q("registration_reminder_exists"), in.Chat).Scan(&alreadyQueued); err != nil {
+			return err
+		}
+		if alreadyQueued {
+			return reply(v)
+		}
+		// Keep the permanent reminder separate from the editable questionnaire.
+		// Completion of this send durably transitions the same job to pinning,
+		// keeping the following questionnaire behind it in chat order.
+		if err = replies.enqueue(ctx, tx, in.Chat, false, "registration_completed", &pb.View{Kind: "notice", Code: "registration_completed"}, in.Actor, 0, 0); err != nil {
+			return err
+		}
+		sends := *replies
+		sends.sendOnly = true
+		return sends.enqueue(ctx, tx, in.Chat, false, "view", v, in.Actor, 0, 0)
 	}
 	if err = reply(v); err != nil {
 		return err

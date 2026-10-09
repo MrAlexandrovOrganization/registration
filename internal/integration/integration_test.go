@@ -83,10 +83,31 @@ func TestParticipationDisabled(t *testing.T) {
 			t.Fatal("hidden answer leaked")
 		}
 	}
+	// With participation disabled, expectations is the final field. Invalid
+	// input must not announce completion; a valid answer queues one reminder.
+	_, err = db.Exec(ctx, "UPDATE users SET state='expectations',expectations=NULL WHERE telegram_id=42")
+	must(err)
+	v = send(42, "", "")
+	if v.Kind != "validation" {
+		t.Fatal("empty last answer accepted")
+	}
+	var reminders int
+	must(db.QueryRow(ctx, "SELECT count(*) FROM outbound_messages WHERE chat=42 AND body->>'code'='registration_completed'").Scan(&reminders))
+	if reminders != 0 {
+		t.Fatal("invalid last answer sent reminder")
+	}
+	v = send(42, "Fixture expectations", "")
+	if v.Kind != "confirm" || len(v.Fields) != 5 {
+		t.Fatal("last answer must still require questionnaire confirmation")
+	}
+	must(db.QueryRow(ctx, "SELECT count(*) FROM outbound_messages WHERE chat=42 AND kind='registration_completed'").Scan(&reminders))
+	if reminders != 1 {
+		t.Fatal("last answer did not send exactly one reminder")
+	}
 	var version int64
 	must(db.QueryRow(ctx, "SELECT version FROM users WHERE telegram_id=42").Scan(&version))
 	v = send(42, "", "c:"+strconv.FormatInt(version, 10)+":confirm")
-	if v.Kind != "registered" || v.Code != "registration_completed" {
+	if v.Kind != "registered" || v.Code != "" || len(v.Fields) != 5 {
 		t.Fatal("confirmation failed")
 	}
 	send(42, "", "p:0")
