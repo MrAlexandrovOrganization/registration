@@ -11,6 +11,7 @@ RUN apk add --no-cache make
 COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
 COPY Makefile versions.mk ./
+COPY scripts/install_go_tool.sh ./scripts/install_go_tool.sh
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     make install-proto

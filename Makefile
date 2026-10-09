@@ -5,13 +5,13 @@ include versions.mk
 .PHONY: install install-proto install-hooks run format check test test-race test-integration build proto-gen config-check migrate import-dry-run validate-data compose-build up down logs restart init-topics
 install: install-proto
 	go mod download
-	GOBIN="$(abspath $(BIN))" go install golang.org/x/tools/cmd/goimports@v$(GOIMPORTS_VERSION)
+	sh scripts/install_go_tool.sh "$(abspath $(BIN))" golang.org/x/tools/cmd/goimports golang.org/x/tools v$(GOIMPORTS_VERSION)
 	python3 -m venv .tools
 	.tools/bin/pip install --disable-pip-version-check -r requirements-tools.txt
 install-proto:
-	GOBIN="$(abspath $(BIN))" go install github.com/bufbuild/buf/cmd/buf@v$(BUF_VERSION)
-	GOBIN="$(abspath $(BIN))" go install google.golang.org/protobuf/cmd/protoc-gen-go@$(PROTOC_GEN_GO_VERSION)
-	GOBIN="$(abspath $(BIN))" go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v$(PROTOC_GEN_GO_GRPC_VERSION)
+	sh scripts/install_go_tool.sh "$(abspath $(BIN))" github.com/bufbuild/buf/cmd/buf github.com/bufbuild/buf v$(BUF_VERSION)
+	sh scripts/install_go_tool.sh "$(abspath $(BIN))" google.golang.org/protobuf/cmd/protoc-gen-go google.golang.org/protobuf $(PROTOC_GEN_GO_VERSION)
+	sh scripts/install_go_tool.sh "$(abspath $(BIN))" google.golang.org/grpc/cmd/protoc-gen-go-grpc google.golang.org/grpc/cmd/protoc-gen-go-grpc v$(PROTOC_GEN_GO_GRPC_VERSION)
 install-hooks:
 	python3 scripts/install_hooks.py
 proto-gen:

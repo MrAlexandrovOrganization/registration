@@ -19,6 +19,17 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ steps.versions.outputs.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements-tools.txt
+      - name: Cache Go tools
+        uses: actions/cache@v4
+        with:
+          path: |
+            .bin/buf
+            .bin/protoc-gen-go
+            .bin/protoc-gen-go-grpc
+            .bin/goimports
+          key: go-tools-v1-${{ runner.os }}-${{ runner.arch }}-go${{ steps.versions.outputs.GO_VERSION }}-${{ hashFiles('versions.mk', 'go.mod', 'scripts/install_go_tool.sh') }}
       - run: make install
       - run: make check
       - run: make test-race
