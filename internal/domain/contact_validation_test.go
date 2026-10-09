@@ -25,6 +25,7 @@ func TestGroupLegacyFormat(t *testing.T) {
 		"М9-11", "ИС9-11", "Э9-11", "МС9-11", "МЦ9-11", "М91-11",
 		"М91с-11", "М91с-11а", "М91с-11ав", "ИУ7-41", "ФН12-32", "Э5-12",
 		"ИУ-11", "ИУ7-169", "ИУ7-11В", "ИУ7-11МВ", "ИУ7ц-11Т", " рк6-71б ",
+		"ФН11-12/6", " фн11-12/12 ", "ИУ7-11МВ/2",
 	} {
 		got, err := Normalize("group", input)
 		if err != nil || got != strings.ToUpper(strings.TrimSpace(input)) {
@@ -35,6 +36,8 @@ func TestGroupLegacyFormat(t *testing.T) {
 		"M9-11", "М999-11", "М9-01", "М9-100", "М9-1", "ММММММ-11",
 		"М9-11аа", "М9-11авв", "ИУ7-171", "ИУ7-10", "ИУ7-11Г", "ИУ7-11ВА",
 		"ИУ7 41", "ИУ7–41", "ИУ7-4 1", "ИУ7-４１", "ИУ7-41\nИУ7-42", "TEST", "123",
+		"ФН11-12/", "ФН11-12//6", "ФН11-12/6/2", "ФН11-12/А", "ФН11-12/-6",
+		"ФН11-12 /6", "ФН11-12/ 6", "ФН11-12/６", "ФH11-12/6",
 	} {
 		_, err := Normalize("group", input)
 		if err == nil || err.Error() != "invalid_group" {
@@ -53,6 +56,7 @@ func TestNextReasksInvalidStoredContacts(t *testing.T) {
 		t.Fatal("invalid stored phone must be requested without overwriting it")
 	}
 	values["phone"] = "79991234567"
+	values["group"] = "ФН11-12/6"
 	if NextRegistration(values, false) != "confirm" {
 		t.Fatal("valid answers must allow confirmation")
 	}

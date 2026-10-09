@@ -28,8 +28,9 @@ var phone = regexp.MustCompile(`^\+?[0-9 ()-]+$`)
 var digits = regexp.MustCompile(`\D`)
 var birthDate = regexp.MustCompile(`^[0-9]{1,2}\.[0-9]{1,2}\.[0-9]{4}$`)
 
-// Preserve the legacy group structure; normalize case before checking it.
-var group = regexp.MustCompile(`^[А-Я]{1,5}[0-9]{0,2}[СИЦ]?-([1-9]|1[0-6])[1-9][АБМТ]?В?$`)
+// Preserve the legacy group structure with an optional /number suffix.
+// Normalize case before checking it.
+var group = regexp.MustCompile(`^[А-Я]{1,5}[0-9]{0,2}[СИЦ]?-([1-9]|1[0-6])[1-9][АБМТ]?В?(/[0-9]+)?$`)
 
 func Normalize(field, value string) (string, error) {
 	value = strings.TrimSpace(value)
