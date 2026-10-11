@@ -6,6 +6,8 @@
 .DS_Store
 *.sqlite*
 *.dump
+*.partial
+backups/
 *.xlsx
 coverage.out
 __pycache__/
