@@ -26,6 +26,7 @@ func TestGroupLegacyFormat(t *testing.T) {
 		"М91с-11", "М91с-11а", "М91с-11ав", "ИУ7-41", "ФН12-32", "Э5-12",
 		"ИУ-11", "ИУ7-169", "ИУ7-11В", "ИУ7-11МВ", "ИУ7ц-11Т", " рк6-71б ",
 		"ФН11-12/6", " фн11-12/12 ", "ИУ7-11МВ/2",
+		"ИБМ-1.10/5", " ибм-1.10/5 ", "ИБМ-1.10", "ИБМ-1.1/5",
 	} {
 		got, err := Normalize("group", input)
 		if err != nil || got != strings.ToUpper(strings.TrimSpace(input)) {
@@ -38,6 +39,8 @@ func TestGroupLegacyFormat(t *testing.T) {
 		"ИУ7 41", "ИУ7–41", "ИУ7-4 1", "ИУ7-４１", "ИУ7-41\nИУ7-42", "TEST", "123",
 		"ФН11-12/", "ФН11-12//6", "ФН11-12/6/2", "ФН11-12/А", "ФН11-12/-6",
 		"ФН11-12 /6", "ФН11-12/ 6", "ФН11-12/６", "ФH11-12/6",
+		"ИБМ-1..10/5", "ИБМ-1.0/5", "ИБМ-1.01/5", "ИБМ-0.10/5", "ИБМ-17.10/5",
+		"ИБМ-.10/5", "ИБМ-1./5", "ИБМ-1x10/5", "ИБМ-1.10/", "ИБМ-1.10/А",
 	} {
 		_, err := Normalize("group", input)
 		if err == nil || err.Error() != "invalid_group" {
@@ -56,8 +59,10 @@ func TestNextReasksInvalidStoredContacts(t *testing.T) {
 		t.Fatal("invalid stored phone must be requested without overwriting it")
 	}
 	values["phone"] = "79991234567"
-	values["group"] = "ФН11-12/6"
-	if NextRegistration(values, false) != "confirm" {
-		t.Fatal("valid answers must allow confirmation")
+	for _, group := range []string{"ФН11-12/6", "ИБМ-1.10/5"} {
+		values["group"] = group
+		if NextRegistration(values, false) != "confirm" {
+			t.Fatalf("valid group %q must allow confirmation", group)
+		}
 	}
 }
