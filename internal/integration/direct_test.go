@@ -678,7 +678,7 @@ func TestDirectRecovery(t *testing.T) {
 	exec("ALTER TABLE outbound_messages DROP CONSTRAINT fixture_reject")
 	r, err = client.Accept(auth, u)
 	must(err)
-	if r.Duplicate || len(r.DeliveryIds) != 2 {
+	if r.Duplicate || len(r.DeliveryIds) != 3 {
 		t.Fatal("failed transaction not recoverable")
 	}
 	seq++

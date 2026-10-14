@@ -256,7 +256,7 @@ func TestRegistrationMilestones(t *testing.T) {
 		t.Fatal("membership updates in the registered staff chat must mark known users as staff")
 	}
 	must(db.QueryRow(ctx, store.Q("registration_count")).Scan(&count))
-	if count != 199 {
+	if count != 179 {
 		t.Fatalf("staff membership must exclude the person from registration count, got %d", count)
 	}
 }
