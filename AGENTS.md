@@ -23,7 +23,13 @@ Participant help/refusals must not reveal roles/permissions; operator views are 
 No commits/push/deployment unless requested. Read docs/OPERATIONS.md before delivery.
 CI validates/builds on PR/push main; SSH CD requires repository DEPLOY_ENABLED=true.
 Keep CD disabled until provisioning and coordinated migration 004/005 rollout are complete.
-SSH workflow fast-forwards main to the checked SHA, then runs the same make up as locally.
+SSH workflow loads makefiles/ci-deploy.mk from the checked SHA and runs make ci-deploy.
+That target locks delivery, fast-forwards clean main, logs in temporarily and runs
+make image-deploy using the updated checkout; stale workflows are rejected.
+CI publishes the built images to GHCR; image-deploy pulls digests, then runs
+image-activate preserving the existing migration/readiness order without building.
+make up remains the local source-build workflow. See README image delivery.
+Explicit CLI operations after delivery use make image-compose IMAGE_ARGS=... .
 Deliberately approved project exception to explicit-only migrations: make up builds
 backend once, stops the old backend, waits for PostgreSQL, runs migrate-compose in a
 fresh disposable CLI container, then starts backend without rebuilding and waits for

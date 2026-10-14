@@ -12,3 +12,6 @@ backups/
 coverage.out
 __pycache__/
 *.pb.go
+
+# Local image release manifests and activation state
+/.images/

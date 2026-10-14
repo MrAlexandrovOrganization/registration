@@ -7,3 +7,11 @@
 *.dump
 *.xlsx
 **/*.pb.go
+
+.images
+
+# Keep credentials and delivery metadata out of images
+.env
+.env.*
+**/.env
+**/.env.*

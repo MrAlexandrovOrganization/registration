@@ -1,7 +1,7 @@
 DOCKER_COMPOSE = docker compose
 BIN = $(CURDIR)/.bin
 BACKUP_DIR ?= $(CURDIR)/backups
-include versions.mk
+include makefiles/versions.mk
 
 .PHONY: install install-proto install-hooks run format check test test-race test-integration build proto-gen config-check migrate import-dry-run validate-data compose-build up down logs restart init-topics
 install: install-proto
@@ -92,3 +92,6 @@ migrate-compose:
 .PHONY: backup
 backup:
 	@python3 scripts/backup.py "$(BACKUP_DIR)" $(DOCKER_COMPOSE)
+
+include makefiles/images.mk
+include makefiles/ci-deploy.mk

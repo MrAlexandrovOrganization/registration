@@ -3,11 +3,11 @@
 ## CI/CD и provisioning
 
 Независимый репозиторий пока не опубликован. `.github/workflows/ci.yml` проверяет
-PR и push main через Make; `check` включает binary build, отдельный `build` собирает
-Compose-образ. Deploy зависит от обоих jobs, работает только на push main при
+PR и push main через Make; `check` включает binary build, `images` после проверок собирает и публикует
+образы. Deploy зависит от успешной публикации, работает только на push main при
 **repository variable `DEPLOY_ENABLED=true`**. Отсутствующее/false значение отключает CD.
 Все jobs используют `ubuntu-24.04`, как notes-bot и subscription-catalog.
-Deploy job использует GitHub environment `production`: в нём можно хранить environment
+GitHub environment `production` сейчас не подключён; при его добавлении: в нём можно хранить environment
 secrets и настроить protection rules, например required reviewers и разрешённую ветку main.
 Само `environment: production` не включает approval: он требуется только при настроенном
 правиле. Проверкам production secrets не нужны.
@@ -23,7 +23,7 @@ secrets и настроить protection rules, например required review
 
 Для backend ожидаемый путь `/home/maxim/projects/backends/registration`, для frontend —
 `/home/maxim/projects/telegram-bots/registration-bot`; фактические пути проверить при
-provisioning. VM нужны Git, Bash, Make, `flock` (util-linux), Docker/Compose v2 с
+provisioning. VM нужны Python 3.9+, Git, Bash, Make, `flock` (util-linux), Docker/Compose v2 с
 `up --wait --wait-timeout`, исходящий доступ к GitHub и registry. Go на VM не нужен.
 Создать независимые чистые clones на main с origin соответствующего репозитория.
 Для private origin настроить **отдельный**
@@ -42,12 +42,13 @@ SSH-шаг workflow требует чистый корень репозитор�
 игнорируемых) и main, получает main из origin и сверяет FETCH_HEAD с SHA успешно
 проверенного push. Затем выполняет fast-forward только на этот SHA и проверяет HEAD.
 Устаревший workflow, divergent checkout или локальные правки приводят к отказу.
-После обновления вызывается `make up` — та же команда, что локально: собирает
-один образ, останавливает backend, ждёт PostgreSQL, выполняет новый одноразовый
-`migrate-compose`, затем запускает backend без сборки/pull и ждёт healthcheck.
+После обновления вызывается `make image-deploy`: скачивает опубликованный digest,
+затем останавливает backend, ждёт PostgreSQL, выполняет новый одноразовый
+отдельный CLI migrate из того же digest, затем запускает backend без сборки/pull и ждёт healthcheck.
 Ожидание PostgreSQL и backend ограничено 180 секундами каждое, CLI migrate — 5 минутами.
 Backend healthcheck проверяет `/readyz` с PostgreSQL; готовность Kafka этим не подтверждается.
-CI-образ проверяется, но не публикуется/не переносится на VM. Автоматические миграции
+CI-образ публикуется в GHCR и переносится на VM по digest; повторной сборки нет.
+Мигратор и backend используют один digest. Доступ и команды — в README, «Доставка образов из CI». Автоматические миграции
 в `make up` согласованы пользователем; импорт, топики и webhook автоматически
 не выполняются. Deploy jobs не отменяют друг друга;
 общий `$HOME/.registration-deploy.lock` сериализует оба репозитория при одном VM_USER.

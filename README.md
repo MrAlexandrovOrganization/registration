@@ -3,7 +3,7 @@
 ## Версии сборки
 
 Go и protoc-gen-go берутся из `go.mod`; образы и остальные инструменты —
-из `versions.mk`; Python-инструменты — из `requirements-tools.txt`.
+из `makefiles/versions.mk`; Python-инструменты — из `requirements-tools.txt`.
 `make versions` показывает значения. Make экспортирует их в Compose, скрипты
 проверок и CI. Сборка образов: `make compose-build`; запуск: `make up`.
 После изменения инструментов повторите `make install`.
@@ -78,7 +78,8 @@ Go-backend регистрации на новый выезд. Владеет Pos
 генератора sqlc. Мигратор выполняет версионированный SQL в транзакции под advisory
 lock, хранит SHA-256 версии; применённый файл изменять нельзя. Процесс `serve`
 только проверяет совместимость схемы. `make up` автоматически запускает отдельный
-CLI мигратора до запуска backend — одинаково локально и в SSH CD.
+CLI мигратора до запуска backend. SSH CD сохраняет этот порядок через
+`make image-deploy`, используя опубликованный образ без сборки на VM.
 
 Это сознательно согласованное исключение из общего правила явных миграций:
 пользователь выбирает цикл «разработка → локальные/CI проверки → применение CD».
@@ -142,7 +143,7 @@ Buf, Go-генераторы/goimports в `.bin`, pre-commit и Ruff в `.tools`
 (Python-зависимости закреплены в requirements-tools.txt). Hooks отдельно.
 
 `make install-proto` устанавливает Buf и локальные
-`protoc-gen-go` / `protoc-gen-go-grpc` через `go install`. Buf и gRPC plugin закреплены в `versions.mk`,
+`protoc-gen-go` / `protoc-gen-go-grpc` через `go install`. Buf и gRPC plugin закреплены в `makefiles/versions.mk`,
 версия Go protobuf plugin берётся из `go.mod`. Отдельный protoc не нужен.
 `make proto-gen` вызывает `buf generate`; минимальные `buf.yaml` и `buf.gen.yaml`
 сохраняют каноническое имя `api/registration.proto` и выходные файлы
@@ -157,7 +158,7 @@ Dockerfile и CI устанавливают инструменты через т
 Совпадающий исполняемый файл используется повторно; отсутствующий или несовпадающий
 устанавливается заново. Это относится также к goimports в `make install`.
 CI кеширует только четыре бинарника инструментов из `.bin`, отдельно от приложения.
-Ключ учитывает ОС/архитектуру runner, Go, `versions.mk`, `go.mod` и скрипт установки.
+Ключ учитывает ОС/архитектуру runner, Go, `makefiles/versions.mk`, `go.mod` и скрипт установки.
 `make install` выполняется и при попадании в кеш, проверяя каждый инструмент.
 Python-зависимости устанавливаются из `requirements-tools.txt` с pip cache;
 virtualenv `.tools` между runner'ами не переносится.
@@ -198,12 +199,12 @@ Pre-commit форматирует только staged Go-файлы, исклю�
 `git add` нет, неизвестные hooks не перезаписываются.
 
 CI на PR и push main вызывает `make install`, `make check`, `make test-race`,
-`make build`; отдельный job выполняет `make compose-build`. SSH CD зависит от
-успеха обоих jobs и включается только repository variable `DEPLOY_ENABLED=true`
+`make build`; затем `images` выполняет `make image-check image-build` и на push
+публикует тот же образ через `make image-publish`. SSH CD зависит от успешной публикации и включается только repository variable `DEPLOY_ENABLED=true`
 для push main. По умолчанию деплой пропущен. Репозитории пока не опубликованы.
-Все jobs используют `ubuntu-24.04`. Deploy использует environment `production`,
+Все jobs используют `ubuntu-24.04`. Environment `production` сейчас не подключён. Deploy
 обновляет main fast-forward до проверенного SHA
-и вызывает `make up`, как при локальном запуске: сборка, остановка backend,
+и вызывает `make image-deploy`: скачивание digest, остановка backend,
 готовность PostgreSQL, миграции, запуск backend и проверка healthchecks.
 Настройки и coordinated rollout migrations 004/005 — [OPERATIONS.md](docs/OPERATIONS.md),
 первый импорт — [MIGRATION.md](docs/MIGRATION.md).
@@ -462,3 +463,59 @@ gRPC stats handlers переносят OTel
 Подключение к действующим Prometheus/Alloy/Jaeger описано в
 [OPERATIONS.md](docs/OPERATIONS.md). Наличие SDK не означает, что события уже
 найдены в Grafana; runtime-проверка выполняется после доставки.
+
+## Доставка образов из CI
+
+CI выполняет существующие проверки, затем `make image-build` собирает все собственные
+образы из build-секций Compose без runtime-секретов и соседних checkout.
+Push main публикует **эти же** образы в GHCR через `make image-publish`.
+Тег содержит SHA, run ID и attempt; artifact `image-release` содержит digest manifest.
+Платформа — `linux/amd64` (текущая VM). На PR публикации и доставки нет.
+Версии build args по-прежнему приходят из Make, определения сборки — из Compose.
+
+SSH CD передаёт SHA, manifest и временный token в `make ci-deploy`.
+Эта цель из `makefiles/ci-deploy.mk` под одной блокировкой проверяет чистый main,
+отклоняет устаревший workflow, fast-forward обновляет checkout до проверенного SHA,
+временно авторизует Docker в GHCR и вызывает `make image-deploy` из нового Makefile.
+Сначала скачиваются все образы, затем `image-activate` сохраняет подготовку/миграции
+этого проекта и запускает Compose с `--no-build --pull never --wait`.
+Доступ к registry удаляется и при ошибке. `ci-deploy` требует переменные
+`DEPLOY_SHA`, `IMAGE_MANIFEST_B64`, `GHCR_USER`, `GHCR_TOKEN` из окружения;
+не передавайте token аргументом Make или команды.
+
+Короткий SSH-шаг делает fetch и загружает только `makefiles/ci-deploy.mk` через
+`git show` из SHA этого workflow. Поэтому первый деплой работает и со старым
+checkout без новой цели. Загруженный файл сам проверяет актуальность SHA и повторно
+делает fetch после захвата блокировки; параллельные доставки не обновляют checkout
+во время активации. Обычные `make up` и существующие `make deploy` сохраняют
+свои прежние контракты; для CI служит отдельная цель `ci-deploy`.
+
+Для CI разрешите GitHub Actions запись Packages. Новые GHCR packages по умолчанию
+private; настройте наследование доступа от этого репозитория. Автоматический CD
+использует временный `GITHUB_TOKEN` с `packages: read` и временный Docker config,
+который удаляется после SSH-шагa. Для ручной доставки нужен отдельный read-only
+доступ (`read:packages`) или публичный package; приложение секреты получает только на VM.
+VM нужны Python 3.9+, Make, Docker Compose с `--wait`, Git и flock для SSH CD.
+
+`.images/current.json` хранит последний успешный manifest, `previous.json` — предыдущий.
+Для отката сначала согласуйте совместимость БД и конфигурации, верните checkout
+к `revision` выбранного manifest и выполните `make image-deploy IMAGE_MANIFEST=...`.
+Автоматического отката БД/образов нет; не удаляйте нужные digests в GHCR.
+`make up` остаётся локальной сборкой из исходников: на VM для релиза используйте
+`image-deploy`; `logs`/`ps` читают те же контейнеры. Сторонние образы не пересобираются,
+их версии остаются в конфигурации проекта. Внешний registry-кеш между CI runs пока
+не настроен. Успешный build не подтверждает runtime: проверяйте readiness и сценарий
+сервиса после доставки.
+
+Для диагностики и явных CLI-операций из активного образа используйте
+`make image-compose IMAGE_ARGS='ps'`, `IMAGE_ARGS='logs -f'` или
+`IMAGE_ARGS='run --rm SERVICE COMMAND'`. Последняя команда автоматически
+запрещает сборку и pull. Она подходит для явных миграций/CLI, которые раньше
+запускались через локальный Compose-образ. После неуспешной активации
+`.images/requested.json` сохраняет manifest попытки; `current.json` остаётся
+последним успешным и не гарантирует, что частичный rollout откатился.
+
+Ручной `image-deploy` использует тот же host lock, что SSH CD; не запускайте
+обходные Compose-операции одновременно с доставкой. При первом переходе на GHCR
+`previous.json` ещё отсутствует: сохраните прежние локальные образы и конфигурацию
+для восстановления по runbook до первого релиза.
