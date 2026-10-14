@@ -13,7 +13,7 @@ image-deploy:
 image-activate:
 	$(IMAGE_COMPOSE) stop backend
 	$(IMAGE_COMPOSE) up -d --no-build --pull never --wait --wait-timeout 180 postgres
-	$(IMAGE_COMPOSE) run --rm --no-build --no-deps --pull never migrate
+	$(IMAGE_COMPOSE) run --rm --no-deps --pull never migrate
 	$(IMAGE_COMPOSE) up -d --no-build --pull never --wait --wait-timeout 180 backend
 
 .PHONY: image-check

@@ -95,9 +95,12 @@ with tempfile.TemporaryDirectory(prefix=name) as directory:
             ["docker", "inspect", "--format", "{{.State.Status}}", ids], capture_output=True
         ).stdout.strip()
 
-    def up(success=True):
+    def up(success=True, published=False):
+        activation = (
+            ["image-activate", "IMAGE_COMPOSE=" + shlex.join(compose)] if published else ["up"]
+        )
         result = subprocess.run(
-            make + ["up"], cwd=root, env=env, text=True, capture_output=True, timeout=600
+            make + activation, cwd=root, env=env, text=True, capture_output=True, timeout=600
         )
         if (result.returncode == 0) != success:
             raise AssertionError(result.stdout + result.stderr)
@@ -134,13 +137,16 @@ with tempfile.TemporaryDirectory(prefix=name) as directory:
         up()
         history = sql("SELECT version,checksum,applied_at FROM schema_migrations ORDER BY version")
         up()
+        # Exercise the exact image-deploy activation target with an existing image.
+        # No registry, build or live resources: the image belongs to this fixture.
+        up(published=True)
         assert (
             sql("SELECT version,checksum,applied_at FROM schema_migrations ORDER BY version")
             == history
         )
         # A running backend must be stopped and migration must run AGAIN on each up.
         sql("UPDATE schema_migrations SET checksum='fixture-corruption' WHERE version=5")
-        up(success=False)
+        up(success=False, published=True)
         assert sql("SELECT checksum FROM schema_migrations WHERE version=5") == "fixture-corruption"
 
         # Real SQL failure after ALTER TABLE: all pending changes must roll back.
@@ -237,7 +243,7 @@ with tempfile.TemporaryDirectory(prefix=name) as directory:
                     process.wait(timeout=10)
         up()
         print(
-            "Compose lifecycle: fresh/repeat, stop-on-failure, SQL rollback, v3 upgrade, concurrent migration passed"
+            "Compose lifecycle: source/image activation, fresh/repeat, stop-on-failure, SQL rollback, v3 upgrade, concurrent migration passed"
         )
     finally:
         run(compose + ["--profile", "tools", "down", "--volumes", "--remove-orphans"])

@@ -478,7 +478,11 @@ SSH CD передаёт SHA, manifest и временный token в `make ci-de
 отклоняет устаревший workflow, fast-forward обновляет checkout до проверенного SHA,
 временно авторизует Docker в GHCR и вызывает `make image-deploy` из нового Makefile.
 Сначала скачиваются все образы, затем `image-activate` сохраняет подготовку/миграции
-этого проекта и запускает Compose с `--no-build --pull never --wait`.
+этого проекта. Для `up` используются `--no-build --pull never --wait`,
+для одноразового мигратора — `run --rm --no-deps --pull never migrate`.
+У `compose run` нет флага `--no-build`; мигратор не содержит build-секции
+и использует уже скачанный digest backend. `make test-compose` проверяет
+как source-build, так и этот путь активации, включая остановку при ошибке миграции.
 Доступ к registry удаляется и при ошибке. `ci-deploy` требует переменные
 `DEPLOY_SHA`, `IMAGE_MANIFEST_B64`, `GHCR_USER`, `GHCR_TOKEN` из окружения;
 не передавайте token аргументом Make или команды.
@@ -510,7 +514,8 @@ VM нужны Python 3.9+, Make, Docker Compose с `--wait`, Git и flock для
 Для диагностики и явных CLI-операций из активного образа используйте
 `make image-compose IMAGE_ARGS='ps'`, `IMAGE_ARGS='logs -f'` или
 `IMAGE_ARGS='run --rm SERVICE COMMAND'`. Последняя команда автоматически
-запрещает сборку и pull. Она подходит для явных миграций/CLI, которые раньше
+добавляет `--pull never` и использует активный digest без `--build`.
+Она подходит для явных миграций/CLI, которые раньше
 запускались через локальный Compose-образ. После неуспешной активации
 `.images/requested.json` сохраняет manifest попытки; `current.json` остаётся
 последним успешным и не гарантирует, что частичный rollout откатился.

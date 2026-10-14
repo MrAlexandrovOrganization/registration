@@ -250,7 +250,7 @@ def operate():
             "Use image-deploy for activation; image-compose supports ps/logs/exec/run/stop/restart"
         )
     if args[0] == "run":
-        args[1:1] = ["--no-build", "--pull", "never"]
+        args[1:1] = ["--pull", "never"]
     command = compose(runtime=True)
     if (ROOT / "compose.images.yaml").exists():
         command += ["-f", "compose.images.yaml"]
