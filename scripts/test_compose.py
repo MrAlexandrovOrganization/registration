@@ -103,7 +103,7 @@ with tempfile.TemporaryDirectory(prefix=name) as directory:
             raise AssertionError(result.stdout + result.stderr)
         if success:
             assert backend_state() == "running"
-            assert sql("SELECT max(version) FROM schema_migrations") == "4"
+            assert sql("SELECT max(version) FROM schema_migrations") == "5"
         else:
             assert backend_state() in ("exited", "absent"), "backend started after failed migration"
 
@@ -139,9 +139,9 @@ with tempfile.TemporaryDirectory(prefix=name) as directory:
             == history
         )
         # A running backend must be stopped and migration must run AGAIN on each up.
-        sql("UPDATE schema_migrations SET checksum='fixture-corruption' WHERE version=4")
+        sql("UPDATE schema_migrations SET checksum='fixture-corruption' WHERE version=5")
         up(success=False)
-        assert sql("SELECT checksum FROM schema_migrations WHERE version=4") == "fixture-corruption"
+        assert sql("SELECT checksum FROM schema_migrations WHERE version=5") == "fixture-corruption"
 
         # Real SQL failure after ALTER TABLE: all pending changes must roll back.
         schema3()
@@ -228,7 +228,7 @@ with tempfile.TemporaryDirectory(prefix=name) as directory:
             assert locker.wait(timeout=30) == 0
             for process in processes:
                 assert process.wait(timeout=60) == 0
-            assert sql("SELECT count(*) FROM schema_migrations") == "4"
+            assert sql("SELECT count(*) FROM schema_migrations") == "5"
             assert sql("SELECT name FROM users WHERE telegram_id=123") == "Synthetic participant"
         finally:
             for process in [locker, *processes]:

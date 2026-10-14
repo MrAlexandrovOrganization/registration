@@ -53,7 +53,7 @@ CI-образ проверяется, но не публикуется/не пе
 общий `$HOME/.registration-deploy.lock` сериализует оба репозитория при одном VM_USER.
 Этот lock **не задаёт порядок релизов** и не заменяет coordinated rollout.
 
-## Coordinated rollout migration 004
+## Coordinated rollout migrations 004 and 005
 
 1. Оставить/выставить `DEPLOY_ENABLED=false` в **обоих** репозиториях; дождаться
    окончания уже запущенных deploy jobs. Выбрать совместимую пару SHA с зелёным CI,
@@ -65,11 +65,13 @@ CI-образ проверяется, но не публикуется/не пе
    пару SHA. Это ручное окно обслуживания,
    не независимые автоматические деплои.
 4. В backend выполнить `make up`: сборка, готовность PostgreSQL, автоматическое
-   применение миграций до 004, затем запуск backend. CLI `serve` сам миграции не
+   применение миграций до 005, затем запуск backend. CLI `serve` сам миграции не
    выполняет. Для уже перенесённой БД повторный импорт SQLite не нужен.
    Pending jobs, leases и sent statuses не сбрасывать.
 5. Проверить backend `127.0.0.1:9095/readyz` и gRPC
-   `registration-backend:50052`. Затем в новом frontend — `make up`.
+   `registration-backend:50052`. Затем в новом frontend — `make up`; после этого
+   администратор запускает `/sync_staff_chat` в личном чате. Только после успешной
+   проверки известных участников backend отправляет начальный счётчик и включает отбивки.
    Для webhook настроить TLS proxy и выполнить явный register; для polling прежде
    удалить старый webhook. Подробности в frontend OPERATIONS.
 6. Проверить readiness frontend `127.0.0.1:9093/readyz`, контролируемые Accept →
@@ -187,7 +189,7 @@ Go-модуля, frontend хранит versioned snapshot того же proto и
 Go с переопределённым go_package при сборке. `*.pb.go` игнорируются Git.
 Сборка не читает соседний репозиторий.
 Совместимые изменения контракта доставлять согласованно: сначала backend, затем
-frontend. Для migration 004 обязателен остановленный coordinated rollout выше,
+frontend. Для migrations 004/005 обязателен остановленный coordinated rollout выше,
 поскольку старый frontend не получает direct replies. Поля protobuf не
 переиспользовать; при удалении резервировать номера.
 `make proto-gen` использует закреплённые версии генераторов; Make-цели сборки,

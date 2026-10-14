@@ -52,7 +52,11 @@ func TestDirectRecovery(t *testing.T) {
 	// Reconstruct schema v3 and exercise the upgrade with outstanding jobs.
 	exec("ALTER TABLE outbound_messages DROP COLUMN update_bot_id CASCADE, DROP COLUMN update_id CASCADE, DROP COLUMN edit_message_id CASCADE")
 	exec("DROP INDEX outbound_interactive_due")
-	exec("DELETE FROM schema_migrations WHERE version=4")
+	exec("DROP TABLE registration_milestone_notifications")
+	exec("ALTER TABLE users DROP COLUMN has_registered, DROP COLUMN staff_membership_checked, DROP COLUMN counselor_membership_checked")
+	exec("ALTER TABLE users DROP COLUMN staff_membership_checked, DROP COLUMN counselor_membership_checked")
+	exec("ALTER TABLE bot_chats DROP COLUMN milestone_ready")
+	exec("DELETE FROM schema_migrations WHERE version>=4")
 	exec(`INSERT INTO outbound_messages(chat,priority,kind,body,status,attempts) VALUES
 	 (90,'interactive','view','{"kind":"help"}','retry_wait',2),
 	 (91,'interactive','view','{"kind":"permissions","fields":[{"key":"permission","value":"admin"}]}','pending',0),
@@ -73,7 +77,7 @@ func TestDirectRecovery(t *testing.T) {
 	if legacyKind != "help" {
 		t.Fatal("sent history rewritten")
 	}
-	svc := &service.Service{DB: db, BotID: 1000, RootID: 1, Milestones: []int{1}, ParticipationEnabled: true}
+	svc := &service.Service{DB: db, BotID: 1000, RootID: 1, ParticipationEnabled: true}
 	listener := bufconn.Listen(1 << 20)
 	server := grpc.NewServer(grpc.UnaryInterceptor(app.Auth(strings.Repeat("x", 32))))
 	pb.RegisterRegistrationServer(server, svc)
@@ -505,6 +509,7 @@ func TestDirectRecovery(t *testing.T) {
 
 	// Filling the last field sends the permanent reminder before confirmation.
 	exec("INSERT INTO bot_chats(chat_id,chat_type) VALUES(-200,'staff')")
+	exec("UPDATE users SET staff_membership_checked=true WHERE telegram_id=10")
 	exec(`UPDATE users SET state='trip_attendance',name='Fixture User',birth_date='10.03.2002',"group"='ИУ7-41',phone='79991234567',expectations='Fixture',will_drive='Обязательно! 🤩',trip_attendance=NULL WHERE telegram_id=10`)
 	must(db.QueryRow(ctx, "SELECT version FROM users WHERE telegram_id=10").Scan(&version))
 	lastAnswer := &pb.Update{Id: seq, Actor: 10, Chat: 10, ChatType: "private", Callback: "c:" + strconv.FormatInt(version, 10) + ":option_0", MessageId: 45, CallbackMessageEditable: true}
@@ -569,30 +574,25 @@ func TestDirectRecovery(t *testing.T) {
 	if !replay.Duplicate || !slices.Equal(replay.DeliveryIds, r.DeliveryIds) {
 		t.Fatal("last answer replay duplicated completion message")
 	}
-	// Confirmation only updates the questionnaire; milestones remain background.
+	// Registration notifications run at each threshold of 25, independently of
+	// the participation switch; one confirmed profile must not emit a milestone.
 	must(db.QueryRow(ctx, "SELECT version FROM users WHERE telegram_id=10").Scan(&version))
 	confirmation := &pb.Update{Id: seq, Actor: 10, Chat: 10, ChatType: "private", Callback: "c:" + strconv.FormatInt(version, 10) + ":confirm", MessageId: 778, CallbackMessageEditable: true}
 	r, err = client.Accept(auth, confirmation)
 	seq++
 	must(err)
 	if len(r.DeliveryIds) != 1 {
-		t.Fatal("confirmation repeated reminder")
+		t.Fatal("confirmation must only update the questionnaire below threshold")
 	}
 	ids = pending(0)
-	if len(ids) != 2 {
-		t.Fatal("milestone not recoverable")
+	if len(ids) != 1 || ids[0] != r.DeliveryIds[0] {
+		t.Fatal("milestone sent below threshold")
 	}
-	for _, id := range ids {
-		d = claim(id)
-		if id == r.DeliveryIds[0] {
-			if d.Kind != "view" || d.View.Kind != "registered" || d.View.Code != "" || d.EditMessageId != 778 {
-				t.Fatal("confirmation must only edit questionnaire")
-			}
-		} else if d.Chat != -200 || d.View.Kind != "milestone" {
-			t.Fatal("incorrect background milestone")
-		}
-		complete(d, "sent")
+	d = claim(r.DeliveryIds[0])
+	if d.Kind != "view" || d.View.Kind != "registered" || d.View.Code != "" || d.EditMessageId != 778 {
+		t.Fatal("confirmation must only edit questionnaire")
 	}
+	complete(d, "sent")
 	// Editing and confirming again must never resend the permanent reminder.
 	surveyCallback := func(action string) *pb.Delivery {
 		t.Helper()

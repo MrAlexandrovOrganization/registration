@@ -11,7 +11,6 @@ type Config struct {
 	DSN, Token, Listen, HTTP, TopicPrefix, TLSCert, TLSKey string
 	Brokers                                                []string
 	RootID, BotID                                          int64
-	Milestones                                             []int
 	ParticipationEnabled                                   bool
 }
 
@@ -44,16 +43,6 @@ func Load() (Config, error) {
 	}
 	if c.TLSCert == "" && env("ALLOW_INSECURE_GRPC", "false") != "true" {
 		return c, errors.New("configure TLS or explicitly allow private-network plaintext gRPC")
-	}
-	for v := range strings.SplitSeq(os.Getenv("MILESTONES"), ",") {
-		if v == "" {
-			continue
-		}
-		n, e := strconv.Atoi(v)
-		if e != nil || n <= 0 {
-			return c, errors.New("invalid MILESTONES")
-		}
-		c.Milestones = append(c.Milestones, n)
 	}
 	return c, nil
 }

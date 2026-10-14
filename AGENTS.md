@@ -22,7 +22,7 @@ coordinated frontend compatibility boundary and safe callback edit attestation.
 Participant help/refusals must not reveal roles/permissions; operator views are private.
 No commits/push/deployment unless requested. Read docs/OPERATIONS.md before delivery.
 CI validates/builds on PR/push main; SSH CD requires repository DEPLOY_ENABLED=true.
-Keep CD disabled until provisioning and coordinated migration 004 rollout are complete.
+Keep CD disabled until provisioning and coordinated migration 004/005 rollout are complete.
 SSH workflow fast-forwards main to the checked SHA, then runs the same make up as locally.
 Deliberately approved project exception to explicit-only migrations: make up builds
 backend once, stops the old backend, waits for PostgreSQL, runs migrate-compose in a

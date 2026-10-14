@@ -134,6 +134,35 @@ func RetryPolicy(outcome string, attempts int, retryAfter int64) (state string, 
 		return "retry_wait", 1, delay, code
 	}
 }
+
+func (s *Service) finishStaffChatSetup(ctx context.Context, tx pgx.Tx, actor, failed int64) error {
+	if err := lockRegistrationMilestones(ctx, tx); err != nil {
+		return err
+	}
+	var chat int64
+	err := tx.QueryRow(ctx, store.Q("chat_for_role"), "staff").Scan(&chat)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if failed > 0 {
+		return enqueue(ctx, tx, chat, true, "view", &pb.View{Kind: "notice", Code: "staff_sync_incomplete"}, actor, 0, 0)
+	}
+	var count int64
+	if err = tx.QueryRow(ctx, store.Q("registration_count")).Scan(&count); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(ctx, store.Q("registration_milestone_baseline"), count); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(ctx, store.Q("registration_chat_activate"), chat); err != nil {
+		return err
+	}
+	return enqueue(ctx, tx, chat, true, "view", &pb.View{Kind: "registration_count", Numbers: []int64{count}}, actor, 0, 0)
+}
+
 func (s *Service) Complete(ctx context.Context, r *pb.Completion) (*pb.Receipt, error) {
 	internal := func(err error) error { return persistenceError(ctx, err) }
 	if r.Id <= 0 || r.Lease == "" {
@@ -204,6 +233,12 @@ func (s *Service) Complete(ctx context.Context, r *pb.Completion) (*pb.Receipt, 
 			view.Numbers = []int64{r.NextAfter, r.Checked, r.FailedMembers}
 			err = enqueue(ctx, tx, chat, false, "sync", view, actor, 0, 0)
 		} else {
+			if view.Field == "registration_count" {
+				err = s.finishStaffChatSetup(ctx, tx, actor, r.FailedMembers)
+			}
+			if err != nil {
+				return nil, internal(err)
+			}
 			err = enqueue(ctx, tx, chat, false, "view", &pb.View{Kind: "sync_done", Numbers: []int64{r.Checked, r.FailedMembers}}, actor, 0, 0)
 		}
 		if err != nil {
@@ -211,6 +246,15 @@ func (s *Service) Complete(ctx context.Context, r *pb.Completion) (*pb.Receipt, 
 		}
 	}
 	if syncAllowed && state == "failed" {
+		view := &pb.View{}
+		if err = protojson.Unmarshal(body, view); err != nil {
+			return nil, internal(err)
+		}
+		if view.Field == "registration_count" {
+			if err = s.finishStaffChatSetup(ctx, tx, actor, 1); err != nil {
+				return nil, internal(err)
+			}
+		}
 		if err = enqueue(ctx, tx, chat, false, "view", &pb.View{Kind: "notice", Code: "sync_denied"}, actor, 0, 0); err != nil {
 			return nil, internal(err)
 		}

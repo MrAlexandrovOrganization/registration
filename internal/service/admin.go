@@ -162,7 +162,18 @@ func (s *Service) admin(ctx context.Context, tx pgx.Tx, in *pb.Update, u *user, 
 			return notice("denied")
 		}
 		role := strings.TrimSuffix(strings.TrimPrefix(cmd, "/sync_"), "_chat")
-		return true, replies.enqueue(ctx, tx, in.Chat, false, "sync", &pb.View{Code: role, Numbers: []int64{0, 0, 0}}, in.Actor, 0, 0)
+		view := &pb.View{Code: role, Numbers: []int64{0, 0, 0}}
+		if role == "staff" {
+			var ready bool
+			err := tx.QueryRow(ctx, store.Q("registration_chat_ready")).Scan(&ready)
+			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+				return true, err
+			}
+			if err == nil && !ready {
+				view.Field = "registration_count"
+			}
+		}
+		return true, replies.enqueue(ctx, tx, in.Chat, false, "sync", view, in.Actor, 0, 0)
 	case "/grant_permission", "/revoke_permission":
 		if !allowed("admin") {
 			return notice("denied")
@@ -194,13 +205,24 @@ func (s *Service) admin(ctx context.Context, tx pgx.Tx, in *pb.Update, u *user, 
 			return notice("denied")
 		}
 		role := strings.TrimSuffix(strings.TrimPrefix(cmd, "/register_"), "_chat")
+		if role == "staff" {
+			if err := lockRegistrationMilestones(ctx, tx); err != nil {
+				return true, err
+			}
+		}
 		if _, err := tx.Exec(ctx, store.Q("chat_deactivate"), role, in.Chat); err != nil {
 			return true, err
 		}
 		if _, err := tx.Exec(ctx, store.Q("chat_register"), in.Chat, role, in.ChatTitle); err != nil {
 			return true, err
 		}
-		return notice("saved")
+		if role != "staff" {
+			return notice("saved")
+		}
+		if _, err := tx.Exec(ctx, store.Q("registration_chat_pending"), in.Chat); err != nil {
+			return true, err
+		}
+		return reply(&pb.View{Kind: "notice", Code: "staff_sync_required"})
 	case "/broadcast":
 		if !allowed("message_sender") || u == nil {
 			return notice("denied")
@@ -371,7 +393,7 @@ func (s *Service) member(ctx context.Context, tx pgx.Tx, in *pb.Update) error {
 		return err
 	}
 	// Chat membership sets event flags only. Explicit administrative grants remain independent.
-	return nil
+	return s.registrationMilestones(ctx, tx)
 }
 func (s *Service) Members(ctx context.Context, r *pb.MembersRequest) (*pb.MembersResponse, error) {
 	internal := func(err error) error { return persistenceError(ctx, err) }

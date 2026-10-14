@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -26,7 +27,6 @@ type Service struct {
 	pb.UnimplementedRegistrationServer
 	DB                   *pgxpool.Pool
 	BotID, RootID        int64
-	Milestones           []int
 	ParticipationEnabled bool
 }
 
@@ -67,6 +67,11 @@ func carrier(ctx context.Context) string {
 }
 func enqueue(ctx context.Context, tx pgx.Tx, chat int64, group bool, kind string, view *pb.View, actor, sourceChat, sourceMessage int64) error {
 	return (*replies)(nil).enqueue(ctx, tx, chat, group, kind, view, actor, sourceChat, sourceMessage)
+}
+
+func lockRegistrationMilestones(ctx context.Context, tx pgx.Tx) error {
+	_, err := tx.Exec(ctx, store.Q("registration_milestone_lock"))
+	return err
 }
 
 // replies associates immediate effects with their durable inbound update.
@@ -158,6 +163,9 @@ func (s *Service) Accept(ctx context.Context, u *pb.Update) (*pb.Receipt, error)
 				v = 1
 			}
 			_, err = tx.Exec(ctx, store.Q("blocked"), u.Chat, v)
+			if err == nil {
+				err = s.registrationMilestones(ctx, tx)
+			}
 		}
 	} else if u.Kind == "member" {
 		err = s.member(ctx, tx, u)
@@ -254,6 +262,9 @@ func (s *Service) infoButtons() []*pb.Button {
 func (s *Service) private(ctx context.Context, tx pgx.Tx, in *pb.Update, replies *replies) error {
 	u, err := readUser(ctx, tx, in.Actor)
 	if err != nil {
+		return err
+	}
+	if err = s.scheduleMembershipChecks(ctx, tx, in.Actor, replies); err != nil {
 		return err
 	}
 	reply := func(v *pb.View) error { return replies.enqueue(ctx, tx, in.Chat, false, "view", v, in.Actor, 0, 0) }
@@ -411,8 +422,8 @@ func (s *Service) private(ctx context.Context, tx pgx.Tx, in *pb.Update, replies
 	if err = saveUser(ctx, tx, in.Actor, &u); err != nil {
 		return err
 	}
-	if u.state == "registered" {
-		if err = s.milestones(ctx, tx); err != nil {
+	if u.state == "confirm" || u.state == "registered" {
+		if err = s.registrationMilestones(ctx, tx); err != nil {
 			return err
 		}
 	}
@@ -443,28 +454,75 @@ func (s *Service) private(ctx context.Context, tx pgx.Tx, in *pb.Update, replies
 	}
 	return nil
 }
-func (s *Service) milestones(ctx context.Context, tx pgx.Tx) error {
-	if !s.ParticipationEnabled {
+
+func (s *Service) scheduleMembershipChecks(ctx context.Context, tx pgx.Tx, userID int64, replies *replies) error {
+	rows, err := tx.Query(ctx, store.Q("membership_targets"), userID)
+	if err != nil {
+		return err
+	}
+	type target struct {
+		role string
+		chat int64
+	}
+	var targets []target
+	for rows.Next() {
+		var item target
+		if err = rows.Scan(&item.role, &item.chat); err != nil {
+			rows.Close()
+			return err
+		}
+		targets = append(targets, item)
+	}
+	if err = rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	for _, item := range targets {
+		if err = replies.enqueue(ctx, tx, userID, false, "membership_check", &pb.View{Code: item.role}, s.RootID, item.chat, userID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Service) registrationMilestones(ctx context.Context, tx pgx.Tx) error {
+	if err := lockRegistrationMilestones(ctx, tx); err != nil {
+		return err
+	}
+	var chat int64
+	err := tx.QueryRow(ctx, store.Q("registration_milestone_chat")).Scan(&chat)
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
-	for _, n := range s.Milestones {
-		var threshold int
-		err := tx.QueryRow(ctx, store.Q("milestone"), n).Scan(&threshold)
-		if errors.Is(err, pgx.ErrNoRows) {
-			continue
-		}
-		if err != nil {
+	if err != nil {
+		return err
+	}
+	var count int64
+	if err = tx.QueryRow(ctx, store.Q("registration_count")).Scan(&count); err != nil {
+		return err
+	}
+	rows, err := tx.Query(ctx, store.Q("registration_milestones_due"), count)
+	if err != nil {
+		return err
+	}
+	var thresholds []int64
+	for rows.Next() {
+		var threshold int64
+		if err = rows.Scan(&threshold); err != nil {
+			rows.Close()
 			return err
 		}
-		var chat int64
-		err = tx.QueryRow(ctx, store.Q("chat_for_role"), "staff").Scan(&chat)
-		if errors.Is(err, pgx.ErrNoRows) {
-			continue
-		}
-		if err != nil {
-			return err
-		}
-		if err = enqueue(ctx, tx, chat, true, "view", &pb.View{Kind: "milestone", Numbers: []int64{int64(n)}}, 0, 0, 0); err != nil {
+		thresholds = append(thresholds, threshold)
+	}
+	if err = rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	slices.Sort(thresholds)
+	for _, threshold := range thresholds {
+		if err = enqueue(ctx, tx, chat, true, "view", &pb.View{Kind: "registration_milestone", Numbers: []int64{threshold}}, 0, 0, 0); err != nil {
 			return err
 		}
 	}

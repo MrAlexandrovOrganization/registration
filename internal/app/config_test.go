@@ -11,14 +11,15 @@ func TestLoadWithoutRegistrationSwitches(t *testing.T) {
 		"BACKEND_TOKEN": strings.Repeat("x", 32),
 		"ROOT_ID":       "1001", "BOT_ID": "1000",
 		"ALLOW_INSECURE_GRPC": "true", "GRPC_TLS_CERT": "", "GRPC_TLS_KEY": "",
-		"MILESTONES": "25,50",
+		// Legacy threshold configuration is ignored; registration milestones are fixed at 10.
+		"MILESTONES": "obsolete",
 		// Obsolete settings must not affect startup, even if left in the environment.
 		"REGISTRATION_EPOCH": "unused", "REGISTRATION_OPEN": "unused", "DELIVERY_ENABLED": "unused",
 	} {
 		t.Setenv(key, value)
 	}
 	c, err := Load()
-	if err != nil || c.RootID != 1001 || c.BotID != 1000 || len(c.Milestones) != 2 {
+	if err != nil || c.RootID != 1001 || c.BotID != 1000 {
 		t.Fatalf("configuration failed: %v", err)
 	}
 }

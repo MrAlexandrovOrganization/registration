@@ -61,7 +61,7 @@ func TestParticipationDisabled(t *testing.T) {
 	must(store.Migrate(ctx, db))
 	_, err = db.Exec(ctx, `INSERT INTO users(telegram_id,state,name,birth_date,"group",phone,expectations,will_drive,trip_attendance) VALUES(42,'will_drive','Fixture','01.01.2000','ИУ7-41','79991234567','test','Пока думаю 🤔','Нет, не смогу 😢')`)
 	must(err)
-	svc := &service.Service{DB: db, RootID: 101, BotID: 1000, Milestones: []int{1}}
+	svc := &service.Service{DB: db, RootID: 101, BotID: 1000}
 	seq := int64(1)
 	send := func(actor int64, text, callback string) *pb.View {
 		t.Helper()
@@ -234,7 +234,7 @@ func TestSystem(t *testing.T) {
 	if _, err = legacy.Apply(ctx, db, snapshot); err == nil {
 		t.Fatal("nonempty destination overwritten")
 	}
-	svc := &service.Service{DB: db, BotID: 1000, RootID: 101, Milestones: []int{1}, ParticipationEnabled: true}
+	svc := &service.Service{DB: db, BotID: 1000, RootID: 101, ParticipationEnabled: true}
 	// Exercise the actual protobuf and authentication boundary, not just direct method calls.
 	listener := bufconn.Listen(1 << 20)
 	server := grpc.NewServer(grpc.UnaryInterceptor(app.Auth(strings.Repeat("x", 32))))

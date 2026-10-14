@@ -11,7 +11,7 @@ SELECT COALESCE(source,':unknown'),count(*) FROM first_starts GROUP BY source OR
 -- name: user
 SELECT state,version,COALESCE(name,''),COALESCE(birth_date,''),COALESCE("group",''),COALESCE(phone,''),COALESCE(expectations,''),COALESCE(will_drive,''),COALESCE(trip_attendance,'') FROM users WHERE telegram_id=$1 FOR UPDATE;
 -- name: save_user
-UPDATE users SET state=$2,version=version+1,name=NULLIF($3,''),birth_date=NULLIF($4,''),"group"=NULLIF($5,''),phone=NULLIF($6,''),expectations=NULLIF($7,''),will_drive=NULLIF($8,''),trip_attendance=NULLIF($9,''),updated_at=now() WHERE telegram_id=$1 RETURNING version;
+UPDATE users SET state=$2,has_registered=has_registered OR $2 IN ('confirm','registered'),version=version+1,name=NULLIF($3,''),birth_date=NULLIF($4,''),"group"=NULLIF($5,''),phone=NULLIF($6,''),expectations=NULLIF($7,''),will_drive=NULLIF($8,''),trip_attendance=NULLIF($9,''),updated_at=now() WHERE telegram_id=$1 RETURNING version;
 -- name: allowed
 SELECT EXISTS(SELECT 1 FROM user_permissions WHERE telegram_id=$1 AND permission=$2);
 -- name: enqueue
@@ -43,11 +43,43 @@ UPDATE bot_chats SET is_active=false WHERE chat_type=$1 AND chat_id<>$2;
 -- name: chat_type
 SELECT chat_type FROM bot_chats WHERE chat_id=$1 AND is_active;
 -- name: role_update
-UPDATE users SET is_staff=CASE WHEN $2='staff' THEN $3 ELSE is_staff END,is_counselor=CASE WHEN $2='counselor' THEN $3 ELSE is_counselor END,updated_at=now() WHERE telegram_id=$1;
+UPDATE users SET is_staff=CASE WHEN $2='staff' THEN $3 ELSE is_staff END,is_counselor=CASE WHEN $2='counselor' THEN $3 ELSE is_counselor END,staff_membership_checked=CASE WHEN $2='staff' THEN true ELSE staff_membership_checked END,counselor_membership_checked=CASE WHEN $2='counselor' THEN true ELSE counselor_membership_checked END,updated_at=now() WHERE telegram_id=$1;
+-- name: membership_targets
+SELECT c.chat_type,c.chat_id FROM bot_chats c JOIN users u ON u.telegram_id=$1
+WHERE c.is_active AND c.chat_type IN ('staff','counselor')
+  AND ((c.chat_type='staff' AND NOT u.staff_membership_checked) OR (c.chat_type='counselor' AND NOT u.counselor_membership_checked))
+  AND NOT EXISTS (
+    SELECT 1 FROM outbound_messages o
+    WHERE o.kind='membership_check' AND o.chat=$1 AND o.source_chat=c.chat_id AND o.source_message=$1
+      AND o.body->>'code'=c.chat_type AND o.status IN ('pending','retry_wait','sending')
+  )
+ORDER BY c.chat_type;
 -- name: members
 SELECT telegram_id FROM users WHERE telegram_id>$1 ORDER BY telegram_id LIMIT 20;
 -- name: chat_for_role
 SELECT chat_id FROM bot_chats WHERE chat_type=$1 AND is_active ORDER BY id LIMIT 1;
+-- name: registration_milestone_chat
+SELECT chat_id FROM bot_chats WHERE chat_type='staff' AND is_active AND milestone_ready ORDER BY id LIMIT 1;
+-- name: registration_chat_ready
+SELECT milestone_ready FROM bot_chats WHERE chat_type='staff' AND is_active ORDER BY id LIMIT 1;
+-- name: registration_chat_pending
+UPDATE bot_chats SET milestone_ready=false WHERE chat_id=$1 AND chat_type='staff' AND is_active;
+-- name: registration_chat_activate
+UPDATE bot_chats SET milestone_ready=true WHERE chat_id=$1 AND chat_type='staff' AND is_active;
+-- name: registration_milestone_lock
+SELECT pg_advisory_xact_lock(725046902);
+-- name: registration_count
+SELECT count(*) FROM users u WHERE u.has_registered AND u.is_blocked=0 AND u.is_staff=0 AND u.is_counselor=0
+  AND (u.staff_membership_checked OR NOT EXISTS(SELECT 1 FROM bot_chats WHERE chat_type='staff' AND is_active))
+  AND (u.counselor_membership_checked OR NOT EXISTS(SELECT 1 FROM bot_chats WHERE chat_type='counselor' AND is_active));
+-- name: registration_milestone_baseline
+INSERT INTO registration_milestone_notifications(threshold)
+SELECT threshold::integer FROM generate_series(10::bigint, $1::bigint - mod($1::bigint,10), 10) AS thresholds(threshold)
+ON CONFLICT DO NOTHING;
+-- name: registration_milestones_due
+INSERT INTO registration_milestone_notifications(threshold)
+SELECT threshold::integer FROM generate_series(10::bigint, $1::bigint - mod($1::bigint,10), 10) AS thresholds(threshold)
+ON CONFLICT DO NOTHING RETURNING threshold;
 -- name: audit
 INSERT INTO audit_events(actor,action,target) VALUES($1,$2,$3);
 -- name: stats
@@ -97,8 +129,6 @@ SELECT u.telegram_id,state,COALESCE(username,''),COALESCE(telegram_sername,''),C
  COALESCE(f.source,''),CASE WHEN f.telegram_id IS NULL THEN 'not_started' WHEN f.source IS NULL THEN 'unknown' WHEN f.source='' THEN 'direct' ELSE 'tagged' END,
  COALESCE(to_char(f.started_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"'),'')
  FROM users u LEFT JOIN first_starts f ON f.telegram_id=u.telegram_id ORDER BY u.id;
--- name: milestone
-INSERT INTO milestone_notifications(threshold) SELECT $1::integer WHERE (SELECT count(*) FROM users WHERE state='registered' AND will_drive='Обязательно! 🤩' AND is_staff=0)>=$1::integer ON CONFLICT DO NOTHING RETURNING threshold;
 -- name: validate
 SELECT COALESCE(name,''),COALESCE(birth_date,''),COALESCE("group",''),COALESCE(phone,''),COALESCE(expectations,''),COALESCE(will_drive,''),COALESCE(trip_attendance,'') FROM users;
 -- name: queue_metrics
