@@ -679,13 +679,13 @@ func TestDirectRecovery(t *testing.T) {
 	r, err = client.Accept(auth, u)
 	must(err)
 	if r.Duplicate || len(r.DeliveryIds) != 3 {
-		t.Fatal("failed transaction not recoverable")
+		t.Fatalf("failed transaction not recoverable: duplicate=%t delivery_ids=%v", r.Duplicate, r.DeliveryIds)
 	}
 	seq++
 
 	// A valid Telegram Unicode message must reach domain validation, not become
 	// a transport InvalidArgument that stalls polling/webhook acknowledgement.
-	exec("INSERT INTO users(telegram_id,state,username) VALUES(200,'expectations','before')")
+	exec("INSERT INTO users(telegram_id,state,username,staff_membership_checked,counselor_membership_checked) VALUES(200,'expectations','before',true,true)")
 	_, unicodeReply := send(200, strings.Repeat("中", 3000)) // 9000 UTF-8 bytes.
 	d = claim(unicodeReply.DeliveryIds[0])
 	if d.View.Kind != "validation" || d.View.Code != "invalid_value" {
