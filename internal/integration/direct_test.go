@@ -54,7 +54,6 @@ func TestDirectRecovery(t *testing.T) {
 	exec("DROP INDEX outbound_interactive_due")
 	exec("DROP TABLE registration_milestone_notifications")
 	exec("ALTER TABLE users DROP COLUMN has_registered, DROP COLUMN staff_membership_checked, DROP COLUMN counselor_membership_checked")
-	exec("ALTER TABLE users DROP COLUMN staff_membership_checked, DROP COLUMN counselor_membership_checked")
 	exec("ALTER TABLE bot_chats DROP COLUMN milestone_ready")
 	exec("DELETE FROM schema_migrations WHERE version>=4")
 	exec(`INSERT INTO outbound_messages(chat,priority,kind,body,status,attempts) VALUES

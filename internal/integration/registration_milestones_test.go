@@ -246,12 +246,12 @@ func TestRegistrationMilestones(t *testing.T) {
 		t.Fatalf("only 170 and 180 should be reported after the initial 164 count, got %d", notifications)
 	}
 
-	memberUpdate = &pb.Update{Id: seq, Actor: 1, Chat: -500, ChatType: "supergroup", Kind: "member", MemberId: 10000, MemberActive: true}
+	memberUpdate = &pb.Update{Id: seq, Actor: 1, Chat: -500, ChatType: "supergroup", Kind: "member", MemberId: 10001, MemberActive: true}
 	seq++
 	_, err = svc.Accept(ctx, memberUpdate)
 	must(err)
 	var isStaff int
-	must(db.QueryRow(ctx, "SELECT is_staff FROM users WHERE telegram_id=10000").Scan(&isStaff))
+	must(db.QueryRow(ctx, "SELECT is_staff FROM users WHERE telegram_id=10001").Scan(&isStaff))
 	if isStaff != 1 {
 		t.Fatal("membership updates in the registered staff chat must mark known users as staff")
 	}

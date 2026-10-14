@@ -52,7 +52,6 @@ func TestFirstStarts(t *testing.T) {
 	exec("DROP INDEX outbound_interactive_due")
 	exec("DROP TABLE registration_milestone_notifications")
 	exec("ALTER TABLE users DROP COLUMN has_registered, DROP COLUMN staff_membership_checked, DROP COLUMN counselor_membership_checked")
-	exec("ALTER TABLE users DROP COLUMN staff_membership_checked, DROP COLUMN counselor_membership_checked")
 	exec("ALTER TABLE bot_chats DROP COLUMN milestone_ready")
 	exec("DROP TABLE first_starts")
 	exec("ALTER TABLE milestone_notifications DROP CONSTRAINT milestone_notifications_pkey")
