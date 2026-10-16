@@ -15,6 +15,7 @@ name = "registration-fixture-" + uuid.uuid4().hex[:10]
 # Never inherit Compose selectors or application credentials; never load .env.
 env = {key: value for key, value in os.environ.items() if not key.startswith("COMPOSE_")}
 env.update(
+    CONTAINER_NAME_PREFIX=name + "-",
     POSTGRES_PASSWORD="synthetic-fixture-password",
     BACKEND_TOKEN="synthetic-fixture-backend-token-at-least-32",
     BOT_ID="1000",

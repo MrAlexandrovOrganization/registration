@@ -1,6 +1,7 @@
 name: registration
 services:
   postgres:
+    container_name: "${CONTAINER_NAME_PREFIX:-}registration-postgres"
     image: postgres:${POSTGRES_VERSION:?Run via make}
     restart: unless-stopped
     environment:
@@ -23,6 +24,7 @@ services:
     mem_limit: 512m
     cpus: 1.0
   backend:
+    container_name: "${CONTAINER_NAME_PREFIX:-}registration-backend"
     image: ${COMPOSE_PROJECT_NAME:-registration}-backend
     build:
       context: .
@@ -71,6 +73,7 @@ services:
     mem_limit: 512m
     cpus: 1.0
   migrate:
+    container_name: "${CONTAINER_NAME_PREFIX:-}registration-migrate"
     image: ${COMPOSE_PROJECT_NAME:-registration}-backend
     profiles: [tools]
     command: [migrate]
