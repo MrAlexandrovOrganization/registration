@@ -167,7 +167,6 @@ class DeliveryTests(unittest.TestCase):
             images.locked_deploy()
         deploy.assert_called_once()
 
-
     def test_legacy_selector_resolves_moved_file(self):
         (self.root / "compose").mkdir(exist_ok=True)
         (self.root / "compose/compose.yaml").write_text("services: {}")
