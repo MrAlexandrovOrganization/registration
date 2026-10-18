@@ -101,7 +101,7 @@ Compose state и безопасные логи. Откатить один ком
 
 ## Минимальная диагностика
 
-`docker compose ps`, `/livez`, `/readyz`, затем метрики очереди. В логах искать
+`docker compose --project-directory . -f compose/docker-compose.yml ps`, `/livez`, `/readyz`, затем метрики очереди. В логах искать
 уровень, код RPC и SQLSTATE; не включать логирование payload и не печатать `.env`.
 Зависшая очередь диагностируется по старейшему заданию, статусу рассылки,
 `next_attempt_at`, глобальному cooldown и сроку lease. Не сбрасывать `sent` для

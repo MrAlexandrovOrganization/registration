@@ -1,5 +1,5 @@
 # CI builds/publishes once; VM activates immutable digests (Python 3 + Docker required).
-export IMAGE_COMPOSE_FILE := docker-compose.yml
+export IMAGE_COMPOSE_FILE := compose/docker-compose.yml
 export IMAGE_ALIASES := migrate=backend
 IMAGE_COMPOSE ?= $(DOCKER_COMPOSE)
 

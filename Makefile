@@ -1,4 +1,6 @@
-DOCKER_COMPOSE = docker compose
+DOCKER_COMPOSE_BASE = docker compose --project-directory "$(CURDIR)"
+include makefiles/compose.mk
+DOCKER_COMPOSE = docker compose --project-directory "$(CURDIR)" $(COMPOSE_FLAGS)
 BIN = $(CURDIR)/.bin
 BACKUP_DIR ?= $(CURDIR)/backups
 include makefiles/versions.mk
@@ -95,3 +97,10 @@ backup:
 
 include makefiles/images.mk
 include makefiles/ci-deploy.mk
+
+# Read-only validation of every tracked Compose combination, without runtime secrets.
+.PHONY: compose-layout-check
+compose-layout-check:
+	$(DOCKER_COMPOSE_BASE) --env-file /dev/null -f compose/docker-compose.yml --profile '*' config --no-interpolate --no-env-resolution --quiet
+
+check: compose-layout-check

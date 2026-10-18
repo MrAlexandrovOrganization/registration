@@ -37,12 +37,14 @@ with tempfile.TemporaryDirectory(prefix=name) as directory:
     compose = [
         "docker",
         "compose",
+        "--project-directory",
+        str(root),
         "--project-name",
         name,
         "--env-file",
         str(root / "config/test.env"),
         "-f",
-        str(root / "docker-compose.yml"),
+        str(root / "compose/docker-compose.yml"),
     ]
     config = json.loads(
         run(
