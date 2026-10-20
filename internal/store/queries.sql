@@ -125,9 +125,8 @@ UPDATE runtime_state SET cooldown_until=GREATEST(cooldown_until,now()+make_inter
 -- name: prepare_registration_pin
 UPDATE outbound_messages SET kind='pin',status='pending',source_message=$2,attempts=0 WHERE id=$1;
 -- name: export
-SELECT u.telegram_id,state,COALESCE(username,''),COALESCE(telegram_sername,''),COALESCE(name,''),COALESCE(birth_date,''),COALESCE("group",''),COALESCE(phone,''),COALESCE(expectations,''),COALESCE(will_drive,''),COALESCE(trip_attendance,''),is_staff,is_counselor,is_blocked,
- COALESCE(f.source,''),CASE WHEN f.telegram_id IS NULL THEN 'not_started' WHEN f.source IS NULL THEN 'unknown' WHEN f.source='' THEN 'direct' ELSE 'tagged' END,
- COALESCE(to_char(f.started_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"'),'')
+SELECT u.telegram_id,COALESCE(username,''),COALESCE(telegram_sername,''),COALESCE(name,''),COALESCE(birth_date,''),COALESCE("group",''),COALESCE(phone,''),COALESCE(expectations,''),COALESCE(will_drive,''),COALESCE(trip_attendance,''),is_staff,is_counselor,is_blocked,
+ COALESCE(f.source,'')
  FROM users u LEFT JOIN first_starts f ON f.telegram_id=u.telegram_id ORDER BY u.id;
 -- name: validate
 SELECT COALESCE(name,''),COALESCE(birth_date,''),COALESCE("group",''),COALESCE(phone,''),COALESCE(expectations,''),COALESCE(will_drive,''),COALESCE(trip_attendance,'') FROM users;

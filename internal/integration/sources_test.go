@@ -233,19 +233,26 @@ func TestFirstStarts(t *testing.T) {
 	if v = view(1, "/sources 0"); v.Code != "sources_usage" {
 		t.Fatal("invalid page accepted")
 	}
-	exported, err := svc.Export(ctx, &pb.ExportRequest{Actor: 1})
-	must(err)
-	file, err := excelize.OpenReader(bytes.NewReader(exported.Xlsx))
-	must(err)
-	defer file.Close()
-	rows, err := file.GetRows("Sheet1")
-	must(err)
-	if rows[0][12] != "first_start_source" {
-		t.Fatal("missing export source header")
-	}
-	for _, row := range rows[1:] {
-		if (row[0] == "10" || row[0] == "20") && (row[12] != tag || row[13] != "tagged" || len(row) != 15) {
-			t.Fatal("wrong exported source", row)
+	for _, participationEnabled := range []bool{false, true} {
+		svc.ParticipationEnabled = participationEnabled
+		sourceColumn := 11
+		if participationEnabled {
+			sourceColumn += 2
+		}
+		exported, err := svc.Export(ctx, &pb.ExportRequest{Actor: 1})
+		must(err)
+		file, err := excelize.OpenReader(bytes.NewReader(exported.Xlsx))
+		must(err)
+		defer file.Close()
+		rows, err := file.GetRows("Sheet1")
+		must(err)
+		if len(rows[0]) != sourceColumn+1 || rows[0][sourceColumn] != "first_start_source" {
+			t.Fatal("missing export source header")
+		}
+		for _, row := range rows[1:] {
+			if (row[0] == "10" || row[0] == "20") && (len(row) != sourceColumn+1 || row[sourceColumn] != tag) {
+				t.Fatal("wrong exported source", row)
+			}
 		}
 	}
 }

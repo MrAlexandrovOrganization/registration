@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -133,13 +134,9 @@ func TestParticipationDisabled(t *testing.T) {
 	defer xlsx.Close()
 	rows, err := xlsx.GetRows("Sheet1")
 	must(err)
-	for _, header := range rows[0] {
-		if header == "will_drive" || header == "trip_attendance" {
-			t.Fatal("hidden export column")
-		}
-	}
-	if len(rows[0]) != 15 {
-		t.Fatal("wrong export column count")
+	headers := []string{"telegram_id", "username", "telegram_sername", "name", "birth_date", "group", "phone", "expectations", "is_staff", "is_counselor", "is_blocked", "first_start_source"}
+	if !slices.Equal(rows[0], headers) {
+		t.Fatalf("wrong export headers: %v", rows[0])
 	}
 	{
 		// Cover both role values and blocked values; staff and incomplete users
@@ -295,7 +292,13 @@ func TestSystem(t *testing.T) {
 	file, err := excelize.OpenReader(bytes.NewReader(export.Xlsx))
 	must(err)
 	defer file.Close()
-	cell, err := file.GetCellValue("Sheet1", "E2")
+	rows, err := file.GetRows("Sheet1")
+	must(err)
+	headers := []string{"telegram_id", "username", "telegram_sername", "name", "birth_date", "group", "phone", "expectations", "will_drive", "trip_attendance", "is_staff", "is_counselor", "is_blocked", "first_start_source"}
+	if !slices.Equal(rows[0], headers) {
+		t.Fatalf("wrong export headers: %v", rows[0])
+	}
+	cell, err := file.GetCellValue("Sheet1", "D2")
 	must(err)
 	if cell != "Manually updated" {
 		t.Fatal("wrong XLSX content")

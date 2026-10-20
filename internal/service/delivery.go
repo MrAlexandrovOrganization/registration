@@ -283,17 +283,28 @@ func (s *Service) Export(ctx context.Context, r *pb.ExportRequest) (*pb.ExportRe
 	defer rows.Close()
 	file := excelize.NewFile()
 	defer file.Close()
-	headers := []string{"telegram_id", "state", "username", "telegram_sername", "name", "birth_date", "group", "phone", "expectations", "will_drive", "trip_attendance", "is_staff", "is_counselor", "is_blocked", "first_start_source", "first_start_status", "first_start_at_utc"}
+	headers := []string{"telegram_id", "username", "telegram_sername", "name", "birth_date", "group", "phone", "expectations", "will_drive", "trip_attendance", "is_staff", "is_counselor", "is_blocked", "first_start_source"}
 	for i, h := range headers {
-		if !s.ParticipationEnabled && (i == 9 || i == 10) {
+		if !s.ParticipationEnabled && (i == 8 || i == 9) {
 			continue
 		}
 		col := i + 1
-		if !s.ParticipationEnabled && i > 10 {
+		if !s.ParticipationEnabled && i > 9 {
 			col -= 2
 		}
 		cell, _ := excelize.CoordinatesToCellName(col, 1)
 		if err = file.SetCellStr("Sheet1", cell, h); err != nil {
+			return nil, internal(err)
+		}
+		width := 22.0
+		switch h {
+		case "name", "telegram_sername":
+			width = 36
+		case "expectations":
+			width = 60
+		}
+		column, _ := excelize.ColumnNumberToName(col)
+		if err = file.SetColWidth("Sheet1", column, column, width); err != nil {
 			return nil, internal(err)
 		}
 	}
@@ -307,7 +318,7 @@ func (s *Service) Export(ctx context.Context, r *pb.ExportRequest) (*pb.ExportRe
 			return nil, internal(err)
 		}
 		for i, v := range values {
-			if !s.ParticipationEnabled && (i == 9 || i == 10) {
+			if !s.ParticipationEnabled && (i == 8 || i == 9) {
 				continue
 			}
 			text := ""
@@ -320,7 +331,7 @@ func (s *Service) Export(ctx context.Context, r *pb.ExportRequest) (*pb.ExportRe
 				text = strconv.FormatInt(int64(value), 10)
 			}
 			col := i + 1
-			if !s.ParticipationEnabled && i > 10 {
+			if !s.ParticipationEnabled && i > 9 {
 				col -= 2
 			}
 			cell, _ := excelize.CoordinatesToCellName(col, n)

@@ -366,8 +366,8 @@ permission сами по себе не открывают operator help. В гр
 
 `/sources [СТРАНИЦА]` доступна root/`table_viewer`, выдаёт агрегаты по 20 источников.
 Считаются пользователи, не клики и не повторные запуски; одинаковая метка объединяет
-все ссылки. XLSX дополнен `first_start_source`, `first_start_status`
-(`tagged`, `direct`, `unknown`, `not_started`) и `first_start_at_utc`.
+все ссылки. XLSX содержит источник в колонке `first_start_source`; служебные
+колонки `state`, `first_start_status` и `first_start_at_utc` в выгрузку не входят.
 Frontend отображает новый View `sources` через существующий контракт protobuf.
 
 При обновлении остановить приём, обновить backend через `make up` (включает
