@@ -134,9 +134,14 @@ func TestParticipationDisabled(t *testing.T) {
 	defer xlsx.Close()
 	rows, err := xlsx.GetRows("Sheet1")
 	must(err)
-	headers := []string{"telegram_id", "username", "telegram_sername", "name", "birth_date", "group", "phone", "expectations", "is_staff", "is_counselor", "is_blocked", "first_start_source"}
+	headers := []string{"telegram_id", "username", "telegram_sername", "name", "birth_date", "group", "phone", "expectations", "is_staff", "is_counselor", "is_blocked", "first_start_source", "has_registered"}
 	if !slices.Equal(rows[0], headers) {
 		t.Fatalf("wrong export headers: %v", rows[0])
+	}
+	for _, row := range rows[1:] {
+		if row[0] == "42" && row[12] != "1" {
+			t.Fatal("completed registration missing from export")
+		}
 	}
 	{
 		// Cover both role values and blocked values; staff and incomplete users
@@ -294,7 +299,7 @@ func TestSystem(t *testing.T) {
 	defer file.Close()
 	rows, err := file.GetRows("Sheet1")
 	must(err)
-	headers := []string{"telegram_id", "username", "telegram_sername", "name", "birth_date", "group", "phone", "expectations", "will_drive", "trip_attendance", "is_staff", "is_counselor", "is_blocked", "first_start_source"}
+	headers := []string{"telegram_id", "username", "telegram_sername", "name", "birth_date", "group", "phone", "expectations", "will_drive", "trip_attendance", "is_staff", "is_counselor", "is_blocked", "first_start_source", "has_registered"}
 	if !slices.Equal(rows[0], headers) {
 		t.Fatalf("wrong export headers: %v", rows[0])
 	}

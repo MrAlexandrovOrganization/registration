@@ -233,6 +233,7 @@ func TestFirstStarts(t *testing.T) {
 	if v = view(1, "/sources 0"); v.Code != "sources_usage" {
 		t.Fatal("invalid page accepted")
 	}
+	exec("UPDATE users SET state='edit_name',has_registered=true WHERE telegram_id=10")
 	for _, participationEnabled := range []bool{false, true} {
 		svc.ParticipationEnabled = participationEnabled
 		sourceColumn := 11
@@ -246,12 +247,18 @@ func TestFirstStarts(t *testing.T) {
 		defer file.Close()
 		rows, err := file.GetRows("Sheet1")
 		must(err)
-		if len(rows[0]) != sourceColumn+1 || rows[0][sourceColumn] != "first_start_source" {
+		if len(rows[0]) != sourceColumn+2 || rows[0][sourceColumn] != "first_start_source" || rows[0][sourceColumn+1] != "has_registered" {
 			t.Fatal("missing export source header")
 		}
 		for _, row := range rows[1:] {
-			if (row[0] == "10" || row[0] == "20") && (len(row) != sourceColumn+1 || row[sourceColumn] != tag) {
+			if (row[0] == "10" || row[0] == "20") && (len(row) != sourceColumn+2 || row[sourceColumn] != tag) {
 				t.Fatal("wrong exported source", row)
+			}
+			if row[0] == "10" && row[sourceColumn+1] != "1" {
+				t.Fatal("editing a completed form lost its export registration flag")
+			}
+			if row[0] == "20" && row[sourceColumn+1] != "0" {
+				t.Fatal("incomplete form marked as registered in export")
 			}
 		}
 	}
