@@ -38,6 +38,7 @@ func TestFirstStarts(t *testing.T) {
 	_, err = bootstrap.Exec(ctx, "CREATE SCHEMA attribution_test")
 	must(err)
 	cfg.ConnConfig.RuntimeParams["search_path"] = "attribution_test"
+	cfg.ConnConfig.RuntimeParams["timezone"] = "Europe/Moscow"
 	db, err := pgxpool.NewWithConfig(ctx, cfg)
 	must(err)
 	defer db.Close()
@@ -136,7 +137,7 @@ func TestFirstStarts(t *testing.T) {
 	}
 	send(21, "/start")
 	send(21, "/start website")
-	check(21, &direct)
+	directAt := check(21, &direct)
 	send(22, "/start invalid.payload")
 	send(22, "/start website")
 	check(22, &direct)
@@ -234,6 +235,7 @@ func TestFirstStarts(t *testing.T) {
 		t.Fatal("invalid page accepted")
 	}
 	exec("UPDATE users SET state='edit_name',has_registered=true WHERE telegram_id=10")
+	exec("INSERT INTO users(telegram_id) VALUES(900)")
 	for _, participationEnabled := range []bool{false, true} {
 		svc.ParticipationEnabled = participationEnabled
 		sourceColumn := 11
@@ -247,11 +249,18 @@ func TestFirstStarts(t *testing.T) {
 		defer file.Close()
 		rows, err := file.GetRows("Sheet1")
 		must(err)
-		if len(rows[0]) != sourceColumn+2 || rows[0][sourceColumn] != "first_start_source" || rows[0][sourceColumn+1] != "has_registered" {
-			t.Fatal("missing export source header")
+		if len(rows[0]) != sourceColumn+3 || rows[0][sourceColumn] != "first_start_source" || rows[0][sourceColumn+1] != "has_registered" || rows[0][sourceColumn+2] != "first_start_at_utc" {
+			t.Fatal("wrong export headers")
 		}
-		for _, row := range rows[1:] {
-			if (row[0] == "10" || row[0] == "20") && (len(row) != sourceColumn+2 || row[sourceColumn] != tag) {
+		wantStarts := map[string]string{
+			"10":  historicalAt.UTC().Format(time.RFC3339),
+			"11":  "",
+			"20":  at.UTC().Format(time.RFC3339),
+			"21":  directAt.UTC().Format(time.RFC3339),
+			"900": "",
+		}
+		for i, row := range rows[1:] {
+			if (row[0] == "10" || row[0] == "20") && (len(row) != sourceColumn+3 || row[sourceColumn] != tag) {
 				t.Fatal("wrong exported source", row)
 			}
 			if row[0] == "10" && row[sourceColumn+1] != "1" {
@@ -260,6 +269,19 @@ func TestFirstStarts(t *testing.T) {
 			if row[0] == "20" && row[sourceColumn+1] != "0" {
 				t.Fatal("incomplete form marked as registered in export")
 			}
+			if want, ok := wantStarts[row[0]]; ok {
+				cell, err := excelize.CoordinatesToCellName(sourceColumn+3, i+2)
+				must(err)
+				got, err := file.GetCellValue("Sheet1", cell)
+				must(err)
+				if got != want {
+					t.Fatalf("wrong exported first start for %s: got %q, want %q", row[0], got, want)
+				}
+				delete(wantStarts, row[0])
+			}
+		}
+		if len(wantStarts) != 0 {
+			t.Fatal("missing users in export")
 		}
 	}
 }

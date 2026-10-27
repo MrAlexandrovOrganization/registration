@@ -126,7 +126,8 @@ UPDATE runtime_state SET cooldown_until=GREATEST(cooldown_until,now()+make_inter
 UPDATE outbound_messages SET kind='pin',status='pending',source_message=$2,attempts=0 WHERE id=$1;
 -- name: export
 SELECT u.telegram_id,COALESCE(username,''),COALESCE(telegram_sername,''),COALESCE(name,''),COALESCE(birth_date,''),COALESCE("group",''),COALESCE(phone,''),COALESCE(expectations,''),COALESCE(will_drive,''),COALESCE(trip_attendance,''),is_staff,is_counselor,is_blocked,
- COALESCE(f.source,''),u.has_registered::int
+ COALESCE(f.source,''),u.has_registered::int,
+ COALESCE(to_char(f.started_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"'),'')
  FROM users u LEFT JOIN first_starts f ON f.telegram_id=u.telegram_id ORDER BY u.id;
 -- name: validate
 SELECT COALESCE(name,''),COALESCE(birth_date,''),COALESCE("group",''),COALESCE(phone,''),COALESCE(expectations,''),COALESCE(will_drive,''),COALESCE(trip_attendance,'') FROM users;

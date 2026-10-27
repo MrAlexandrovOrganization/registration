@@ -283,7 +283,7 @@ func (s *Service) Export(ctx context.Context, r *pb.ExportRequest) (*pb.ExportRe
 	defer rows.Close()
 	file := excelize.NewFile()
 	defer file.Close()
-	headers := []string{"telegram_id", "username", "telegram_sername", "name", "birth_date", "group", "phone", "expectations", "will_drive", "trip_attendance", "is_staff", "is_counselor", "is_blocked", "first_start_source", "has_registered"}
+	headers := []string{"telegram_id", "username", "telegram_sername", "name", "birth_date", "group", "phone", "expectations", "will_drive", "trip_attendance", "is_staff", "is_counselor", "is_blocked", "first_start_source", "has_registered", "first_start_at_utc"}
 	for i, h := range headers {
 		if !s.ParticipationEnabled && (i == 8 || i == 9) {
 			continue
@@ -302,6 +302,8 @@ func (s *Service) Export(ctx context.Context, r *pb.ExportRequest) (*pb.ExportRe
 			width = 36
 		case "expectations":
 			width = 60
+		case "first_start_at_utc":
+			width = 24
 		}
 		column, _ := excelize.ColumnNumberToName(col)
 		if err = file.SetColWidth("Sheet1", column, column, width); err != nil {
