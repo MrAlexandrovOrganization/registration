@@ -59,6 +59,8 @@ func (s *Service) admin(ctx context.Context, tx pgx.Tx, in *pb.Update, u *user, 
 	}
 	allowed := func(p string) bool { return s.allowed(ctx, tx, in.Actor, p) }
 	switch cmd {
+	case "/question_new", "/question_preview", "/question_publish", "/question_close", "/question_results", "/questions":
+		return s.surveyAdmin(ctx, tx, in, replies, parts)
 	case "/help":
 		if in.ChatType != "private" {
 			return reply(&pb.View{Kind: "help_public"})

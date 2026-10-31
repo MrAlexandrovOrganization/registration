@@ -17,7 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-//go:embed queries.sql import.sql schema.sql migrations/*.sql
+//go:embed queries.sql import.sql schema.sql surveys.sql migrations/*.sql
 var files embed.FS
 var queries = loadQueries()
 
@@ -54,7 +54,7 @@ func migrationPaths(source fs.FS) ([]string, error) {
 
 func loadQueries() map[string]string {
 	result := map[string]string{}
-	for _, file := range []string{"queries.sql", "import.sql", "schema.sql"} {
+	for _, file := range []string{"queries.sql", "import.sql", "schema.sql", "surveys.sql"} {
 		data, err := files.ReadFile(file)
 		if err != nil {
 			panic(err)

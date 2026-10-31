@@ -55,7 +55,14 @@ func (s *Service) Claim(ctx context.Context, r *pb.ClaimRequest) (*pb.Delivery, 
 			if err = protojson.Unmarshal(body, d.View); err != nil {
 				return nil, status.Error(codes.Internal, "invalid persisted view")
 			}
-			allowed, err := s.deliveryAllowed(ctx, tx, d)
+			deliverable, err := refreshSurveyDelivery(ctx, tx, d)
+			if err != nil {
+				return nil, internal(err)
+			}
+			allowed := false
+			if deliverable {
+				allowed, err = s.deliveryAllowed(ctx, tx, d)
+			}
 			if err != nil {
 				return nil, internal(err)
 			}
@@ -276,6 +283,10 @@ func (s *Service) Export(ctx context.Context, r *pb.ExportRequest) (*pb.ExportRe
 	if !s.allowed(ctx, tx, r.Actor, "table_viewer") {
 		return nil, status.Error(codes.PermissionDenied, "permission denied")
 	}
+	surveyColumns, surveyAnswers, err := loadSurveyExport(ctx, tx)
+	if err != nil {
+		return nil, internal(err)
+	}
 	rows, err := tx.Query(ctx, store.Q("export"))
 	if err != nil {
 		return nil, internal(err)
@@ -307,6 +318,16 @@ func (s *Service) Export(ctx context.Context, r *pb.ExportRequest) (*pb.ExportRe
 		}
 		column, _ := excelize.ColumnNumberToName(col)
 		if err = file.SetColWidth("Sheet1", column, column, width); err != nil {
+			return nil, internal(err)
+		}
+	}
+	surveyColumnStart := len(headers) + 1
+	if !s.ParticipationEnabled {
+		surveyColumnStart -= 2
+	}
+	for i, q := range surveyColumns {
+		cell, _ := excelize.CoordinatesToCellName(surveyColumnStart+i, 1)
+		if err = file.SetCellStr("Sheet1", cell, "question_"+number(q.id)+": "+q.title); err != nil {
 			return nil, internal(err)
 		}
 	}
@@ -342,11 +363,19 @@ func (s *Service) Export(ctx context.Context, r *pb.ExportRequest) (*pb.ExportRe
 				return nil, internal(err)
 			}
 		}
+		actor := values[0].(int64)
+		for i, q := range surveyColumns {
+			cell, _ := excelize.CoordinatesToCellName(surveyColumnStart+i, n)
+			if err = file.SetCellStr("Sheet1", cell, surveyAnswers[actor][q.id]); err != nil {
+				return nil, internal(err)
+			}
+		}
 		n++
 	}
 	if err = rows.Err(); err != nil {
 		return nil, internal(err)
 	}
+	rows.Close()
 	if _, err = tx.Exec(ctx, store.Q("audit"), r.Actor, "export", 0); err != nil {
 		return nil, internal(err)
 	}

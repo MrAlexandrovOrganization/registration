@@ -45,6 +45,8 @@ func validUpdateContent(u *pb.Update) bool {
 		{u.ChatTitle, 256},
 		{u.Phone, 256},
 		{u.Callback, 64},
+		{u.PhotoFileId, 1024},
+		{u.PhotoCaption, 4096},
 	} {
 		// PostgreSQL text/JSONB cannot store U+0000. Do not retry it forever or
 		// silently truncate/repair content and accidentally execute a command.
@@ -53,6 +55,9 @@ func validUpdateContent(u *pb.Update) bool {
 		}
 	}
 	// callback_data is the deliberate exception: Telegram specifies 1..64 bytes.
+	if strings.ContainsAny(u.PhotoFileId, ":/\\") {
+		return false
+	}
 	if len(u.Callback) > 64 {
 		return false
 	}

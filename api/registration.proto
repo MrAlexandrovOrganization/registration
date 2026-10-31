@@ -1,5 +1,6 @@
 syntax = "proto3";
 package registration.v1;
+
 option go_package = "registration.local/backend/api;api";
 
 service Registration {
@@ -34,6 +35,11 @@ message Update {
   // Trusted frontend attestation: callback message is accessible, text-only,
   // authored by this bot in this chat (not inline, media or a user message).
   bool callback_message_editable = 16;
+  // Telegram file_id, never a download URL. Only used by the question wizard.
+  string photo_file_id = 17;
+  // Accessible bot-owned private photo callback, suitable for markup removal.
+  bool callback_photo_editable = 18;
+  string photo_caption = 19;
 }
 message Receipt {
   bool duplicate = 1;
@@ -45,8 +51,16 @@ message PendingInteractiveRequest {
   // 0 uses 100; valid explicit range 1..100. No cursor: repeat after processing.
   int32 limit = 1;
 }
-message Field { string key = 1; string value = 2; }
-message Button { string label_key = 1; string data = 2; }
+message Field {
+  string key = 1;
+  string value = 2;
+}
+message Button {
+  string label_key = 1;
+  string data = 2;
+  // Administrator-authored plain text; label_key remains for static resources.
+  string label = 3;
+}
 message View {
   string kind = 1;
   string field = 2;
@@ -54,10 +68,22 @@ message View {
   repeated Button buttons = 4;
   repeated int64 numbers = 5;
   string code = 6;
+  // Plain text only. Frontends must escape these before HTML rendering.
+  string title = 7;
+  string text = 8;
+  // Nonempty only for photo question invitations, never text receipts.
+  string photo_file_id = 9;
 }
-message ClaimRequest { int64 id = 1; string worker = 2; }
-message ReleaseSenderRequest { string worker = 1; }
-message ReleaseSenderResponse { bool released = 1; }
+message ClaimRequest {
+  int64 id = 1;
+  string worker = 2;
+}
+message ReleaseSenderRequest {
+  string worker = 1;
+}
+message ReleaseSenderResponse {
+  bool released = 1;
+}
 message Delivery {
   int64 id = 1;
   string lease = 2;
@@ -85,8 +111,24 @@ message Completion {
   int64 checked = 8;
   int64 failed_members = 9;
 }
-message ExportRequest { int64 actor = 1; }
-message ExportResponse { bytes xlsx = 1; }
-message MembersRequest { int64 actor = 1; string role = 2; int64 after = 3; }
-message MembersResponse { int64 chat = 1; repeated int64 users = 2; }
-message SyncMemberRequest { int64 actor = 1; int64 chat = 2; int64 user = 3; bool active = 4; }
+message ExportRequest {
+  int64 actor = 1;
+}
+message ExportResponse {
+  bytes xlsx = 1;
+}
+message MembersRequest {
+  int64 actor = 1;
+  string role = 2;
+  int64 after = 3;
+}
+message MembersResponse {
+  int64 chat = 1;
+  repeated int64 users = 2;
+}
+message SyncMemberRequest {
+  int64 actor = 1;
+  int64 chat = 2;
+  int64 user = 3;
+  bool active = 4;
+}

@@ -51,6 +51,7 @@ func TestFirstStarts(t *testing.T) {
 	// Reconstruct version 1 and verify the real upgrade preserves historical users.
 	exec("ALTER TABLE outbound_messages DROP COLUMN update_bot_id CASCADE, DROP COLUMN update_id CASCADE, DROP COLUMN edit_message_id CASCADE")
 	exec("DROP INDEX outbound_interactive_due")
+	exec("DROP VIEW survey_participants; DROP TABLE survey_answers, survey_options, survey_questions, survey_drafts")
 	exec("DROP TABLE registration_milestone_notifications")
 	exec("ALTER TABLE users DROP COLUMN has_registered, DROP COLUMN staff_membership_checked, DROP COLUMN counselor_membership_checked")
 	exec("ALTER TABLE bot_chats DROP COLUMN milestone_ready")

@@ -77,12 +77,19 @@ func lockRegistrationMilestones(ctx context.Context, tx pgx.Tx) error {
 // replies associates immediate effects with their durable inbound update.
 // Background effects intentionally have no inbound association.
 type replies struct {
-	botID    int64
-	update   *pb.Update
-	sendOnly bool
+	botID           int64
+	update          *pb.Update
+	sendOnly        bool
+	keyboardRemoved bool
 }
 
 func (r *replies) enqueue(ctx context.Context, tx pgx.Tx, chat int64, group bool, kind string, view *pb.View, actor, sourceChat, sourceMessage int64) error {
+	if r != nil && view != nil && (kind == "view" || kind == "registration_completed") &&
+		(r.update.CallbackPhotoEditable || (r.update.CallbackMessageEditable && view.PhotoFileId != "")) {
+		if err := r.removeKeyboard(ctx, tx, chat, group, actor); err != nil {
+			return err
+		}
+	}
 	data := []byte("{}")
 	var err error
 	if view != nil {
@@ -103,7 +110,21 @@ func (r *replies) enqueue(ctx context.Context, tx pgx.Tx, chat int64, group bool
 	return err
 }
 
+// Only the trusted frontend attestation can authorize editing a callback message.
+func (r *replies) removeKeyboard(ctx context.Context, tx pgx.Tx, chat int64, group bool, actor int64) error {
+	if r == nil || r.keyboardRemoved || group || chat != r.update.Chat || chat != r.update.Actor ||
+		r.update.ChatType != "private" || r.update.MessageId <= 0 || r.update.Callback == "" ||
+		(!r.update.CallbackMessageEditable && !r.update.CallbackPhotoEditable) {
+		return nil
+	}
+	r.keyboardRemoved = true
+	return r.enqueue(ctx, tx, chat, false, "survey_remove_keyboard", nil, actor, 0, r.update.MessageId)
+}
+
 func editTarget(u *pb.Update, view *pb.View) int64 {
+	if u.CallbackPhotoEditable || (view != nil && view.PhotoFileId != "") {
+		return 0
+	}
 	if !u.CallbackMessageEditable || u.Callback == "" || u.MessageId <= 0 || u.ChatType != "private" || u.Chat != u.Actor || view == nil {
 		return 0
 	}
@@ -113,7 +134,7 @@ func editTarget(u *pb.Update, view *pb.View) int64 {
 		if view.Field == "phone" {
 			return 0
 		}
-	case "confirm", "registered", "edit", "about", "bring":
+	case "confirm", "registered", "edit", "about", "bring", "survey_question":
 	default:
 		return 0
 	}
@@ -172,7 +193,14 @@ func (s *Service) Accept(ctx context.Context, u *pb.Update) (*pb.Receipt, error)
 	} else if u.ChatType != "private" {
 		err = s.adminGroup(ctx, tx, u, replies)
 	} else {
-		_, err = tx.Exec(ctx, store.Q("ensure_user"), u.Actor, u.Username, u.DisplayName)
+		lock := "survey_lifecycle_read"
+		if surveyLifecycleCommand(u.Text) {
+			lock = "survey_lifecycle_write"
+		}
+		_, err = tx.Exec(ctx, store.Q(lock))
+		if err == nil {
+			_, err = tx.Exec(ctx, store.Q("ensure_user"), u.Actor, u.Username, u.DisplayName)
+		}
 		if err == nil {
 			err = s.private(ctx, tx, u, replies)
 		}
@@ -192,6 +220,7 @@ func (s *Service) Accept(ctx context.Context, u *pb.Update) (*pb.Receipt, error)
 }
 
 type user struct {
+	surveys []surveyQuestion
 	state   string
 	version int64
 	values  map[string]string
@@ -240,6 +269,16 @@ func (s *Service) view(u user) *pb.View {
 		}
 		v.Buttons = append(v.Buttons, s.button(u.version, "cancel", "cancel"))
 	default:
+		if id, e := strconv.ParseInt(strings.TrimPrefix(strings.TrimPrefix(u.state, "edit_"), "survey_"), 10, 64); e == nil {
+			if q, ok := findSurvey(u.surveys, id); ok && q.status == "open" {
+				v = surveyView(q, "survey_question", fmt.Sprintf("c:%d:sq_", u.version))
+				if strings.HasPrefix(u.state, "edit_") {
+					v.Buttons = append(v.Buttons, s.button(u.version, "cancel", "cancel"))
+				}
+				return v
+			}
+			return &pb.View{Kind: "notice", Code: "stale"}
+		}
 		field := strings.TrimPrefix(u.state, "edit_")
 		v.Field = field
 		for i := range domain.Options[field] {
@@ -264,6 +303,10 @@ func (s *Service) private(ctx context.Context, tx pgx.Tx, in *pb.Update, replies
 	if err != nil {
 		return err
 	}
+	u.surveys, err = loadSurveys(ctx, tx, in.Actor)
+	if err != nil {
+		return err
+	}
 	if err = s.scheduleMembershipChecks(ctx, tx, in.Actor, replies); err != nil {
 		return err
 	}
@@ -281,6 +324,15 @@ func (s *Service) private(ctx context.Context, tx pgx.Tx, in *pb.Update, replies
 			return err
 		}
 	}
+	if handled, err := s.surveyDraft(ctx, tx, in, replies); handled || err != nil {
+		return err
+	}
+	if handled, err := s.surveyCallback(ctx, tx, in, &u, replies); handled || err != nil {
+		return err
+	}
+	if strings.HasPrefix(in.Callback, "preview_") {
+		return nil
+	}
 	if in.Callback == "info:about" || in.Callback == "info:bring" {
 		v := &pb.View{Kind: strings.TrimPrefix(in.Callback, "info:")}
 		if !strings.HasPrefix(u.state, "broadcast_") {
@@ -291,7 +343,7 @@ func (s *Service) private(ctx context.Context, tx pgx.Tx, in *pb.Update, replies
 	}
 	if strings.HasPrefix(u.state, "broadcast_") && !isStart {
 		if in.Text == "/cancel" {
-			u.state = s.next(u.values)
+			u.state = s.nextUser(u)
 			if err = saveUser(ctx, tx, in.Actor, &u); err != nil {
 				return err
 			}
@@ -311,7 +363,7 @@ func (s *Service) private(ctx context.Context, tx pgx.Tx, in *pb.Update, replies
 		if err = tx.QueryRow(ctx, store.Q("audience_count"), audience).Scan(&count); err != nil {
 			return err
 		}
-		u.state = s.next(u.values)
+		u.state = s.nextUser(u)
 		if err = saveUser(ctx, tx, in.Actor, &u); err != nil {
 			return err
 		}
@@ -319,6 +371,9 @@ func (s *Service) private(ctx context.Context, tx pgx.Tx, in *pb.Update, replies
 			return err
 		}
 		return reply(&pb.View{Kind: "broadcast_preview", Numbers: []int64{id, count}})
+	}
+	if in.PhotoFileId != "" {
+		return reply(&pb.View{Kind: "notice", Code: "invalid_content"})
 	}
 	if strings.HasPrefix(in.Callback, "p:") {
 		if !s.ParticipationEnabled {
@@ -338,7 +393,7 @@ func (s *Service) private(ctx context.Context, tx pgx.Tx, in *pb.Update, replies
 	action := ""
 	field := strings.TrimPrefix(u.state, "edit_")
 	if !isStart && !s.ParticipationEnabled && (field == "will_drive" || field == "trip_attendance") {
-		u.state = s.next(u.values)
+		u.state = s.nextUser(u)
 		if err = saveUser(ctx, tx, in.Actor, &u); err != nil {
 			return err
 		}
@@ -358,12 +413,12 @@ func (s *Service) private(ctx context.Context, tx pgx.Tx, in *pb.Update, replies
 		return reply(s.view(u))
 	case isStart || in.Text == "/cancel" || u.state == "new":
 		if u.state != "registered" || s.next(u.values) != "confirm" {
-			u.state = s.next(u.values)
+			u.state = s.nextUser(u)
 		}
 	case action == "edit" && (u.state == "registered" || u.state == "confirm"):
 		u.state = "edit"
 	case action == "cancel":
-		u.state = s.next(u.values)
+		u.state = s.nextUser(u)
 	case strings.HasPrefix(action, "edit_") && u.state == "edit":
 		valid := false
 		for _, f := range domain.RegistrationFields(s.ParticipationEnabled) {
@@ -376,14 +431,21 @@ func (s *Service) private(ctx context.Context, tx pgx.Tx, in *pb.Update, replies
 		}
 		u.state = action
 	case action == "confirm" && u.state == "confirm":
-		if s.next(u.values) != "confirm" {
-			u.state = s.next(u.values)
+		if s.nextUser(u) != "confirm" {
+			u.state = s.nextUser(u)
 		} else {
 			u.state = "registered"
 		}
 	case u.state == "registered" || u.state == "confirm" || u.state == "edit":
 		return reply(s.view(u))
 	default:
+		if handled, err := s.surveyFormAnswer(ctx, tx, in, &u, action); handled || err != nil {
+			if err != nil {
+				return err
+			}
+			completedLastField = u.state == "confirm"
+			break
+		}
 		field := strings.TrimPrefix(u.state, "edit_")
 		value := in.Text
 		if options := domain.Options[field]; len(options) > 0 {
@@ -416,7 +478,7 @@ func (s *Service) private(ctx context.Context, tx pgx.Tx, in *pb.Update, replies
 		}
 		u.values[field] = value
 		editing := strings.HasPrefix(u.state, "edit_")
-		u.state = s.next(u.values)
+		u.state = s.nextUser(u)
 		completedLastField = !editing && u.state == "confirm"
 	}
 	if err = saveUser(ctx, tx, in.Actor, &u); err != nil {

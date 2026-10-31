@@ -25,6 +25,17 @@ func (s *Service) deliveryAllowed(ctx context.Context, tx pgx.Tx, d *pb.Delivery
 			permission, private = "operator", true
 		case "stats", "sources":
 			permission = "table_viewer"
+		case "survey_results", "survey_people":
+			permission, private = "table_viewer", true
+		case "survey_notice":
+			permission, private = "operator", true
+		case "survey_manage", "survey_preview":
+			permission, private = "message_sender", true
+		case "survey_list":
+			if d.Group || d.Chat != d.Actor {
+				return false, nil
+			}
+			return s.allowed(ctx, tx, d.Actor, "table_viewer") || s.allowed(ctx, tx, d.Actor, "message_sender"), nil
 		case "sync_done":
 			permission, private = "admin", true
 		case "broadcast_preview", "broadcast_progress":

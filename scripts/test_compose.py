@@ -109,7 +109,7 @@ with tempfile.TemporaryDirectory(prefix=name) as directory:
             raise AssertionError(result.stdout + result.stderr)
         if success:
             assert backend_state() == "running"
-            assert sql("SELECT max(version) FROM schema_migrations") == "5"
+            assert sql("SELECT max(version) FROM schema_migrations") == "6"
         else:
             assert backend_state() in ("exited", "absent"), "backend started after failed migration"
 
@@ -237,7 +237,7 @@ with tempfile.TemporaryDirectory(prefix=name) as directory:
             assert locker.wait(timeout=30) == 0
             for process in processes:
                 assert process.wait(timeout=60) == 0
-            assert sql("SELECT count(*) FROM schema_migrations") == "5"
+            assert sql("SELECT count(*) FROM schema_migrations") == "6"
             assert sql("SELECT name FROM users WHERE telegram_id=123") == "Synthetic participant"
         finally:
             for process in [locker, *processes]:

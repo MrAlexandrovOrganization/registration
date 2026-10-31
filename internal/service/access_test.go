@@ -51,7 +51,7 @@ func (tx *accessTx) Exec(ctx context.Context, query string, args ...any) (pgconn
 
 func TestInaccessibleCommandsAreSilent(t *testing.T) {
 	s := &Service{RootID: 1}
-	commands := []string{"/my_permissions", "/stats", "/sources invalid", "/export", "/grant_permission 99 admin", "/revoke_permission", "/register_staff_chat", "/register_counselor_chat", "/register_superuser_chat", "/sync_staff_chat", "/sync_counselor_chat", "/broadcast staff", "/poll staff", "/send 1", "/pause 1", "/resume 1", "/cancel_broadcast 1", "/retry 1", "/progress 1", "/unknown"}
+	commands := []string{"/question_new", "/question_preview 1", "/question_publish 1", "/question_close 1", "/question_results 1", "/questions", "/my_permissions", "/stats", "/sources invalid", "/export", "/grant_permission 99 admin", "/revoke_permission", "/register_staff_chat", "/register_counselor_chat", "/register_superuser_chat", "/sync_staff_chat", "/sync_counselor_chat", "/broadcast staff", "/poll staff", "/send 1", "/pause 1", "/resume 1", "/cancel_broadcast 1", "/retry 1", "/progress 1", "/unknown"}
 	for _, permission := range []string{"", "staff"} {
 		for _, chatType := range []string{"private", "supergroup"} {
 			for _, command := range commands {
@@ -67,6 +67,9 @@ func TestInaccessibleCommandsAreSilent(t *testing.T) {
 		}
 	}
 	for _, tc := range []struct{ permission, command, chatType string }{
+		{"table_viewer", "/question_new", "private"},
+		{"message_sender", "/question_results 1", "private"},
+		{"message_sender", "/question_publish 1", "supergroup"},
 		{"table_viewer", "/broadcast all", "private"},
 		{"table_viewer", "/poll all", "private"},
 		{"message_sender", "/poll all", "supergroup"},
@@ -114,6 +117,11 @@ func TestQueuedAdminAccess(t *testing.T) {
 		{"view", "permissions", "", "operator", true},
 		{"view", "stats", "", "table_viewer", false},
 		{"view", "sources", "", "table_viewer", false},
+		{"view", "survey_results", "", "table_viewer", true},
+		{"view", "survey_people", "", "table_viewer", true},
+		{"view", "survey_manage", "", "message_sender", true},
+		{"view", "survey_preview", "", "message_sender", true},
+		{"view", "survey_notice", "", "operator", true},
 		{"export", "", "", "table_viewer", true},
 		{"sync", "", "", "admin", true},
 		{"view", "sync_done", "", "admin", true},
