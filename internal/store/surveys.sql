@@ -49,4 +49,4 @@ AND NOT EXISTS(SELECT 1 FROM survey_answers a WHERE a.question_id=p.question_id 
 -- name: survey_export_questions
 SELECT id,title FROM survey_questions WHERE status<>'draft' ORDER BY id;
 -- name: survey_export_answers
-SELECT a.telegram_id,a.question_id,o.label FROM survey_answers a JOIN survey_options o ON o.id=a.option_id ORDER BY a.telegram_id,a.question_id;
+SELECT a.telegram_id,a.question_id,o.label FROM survey_answers a JOIN survey_options o ON o.id=a.option_id AND o.question_id=a.question_id ORDER BY a.telegram_id,a.question_id;

@@ -289,7 +289,7 @@ func TestSurveyQuestions(t *testing.T) {
 	rows, err := file.GetRows("Sheet1")
 	f.must(err)
 	last := len(rows[0]) - 1
-	if rows[0][last] != "question_"+strconv.FormatInt(q, 10)+": Трансфер <&>" {
+	if rows[0][last] != "Ответ на вопрос «Трансфер <&>» (№"+strconv.FormatInt(q, 10)+")" {
 		t.Fatal(rows[0])
 	}
 	for _, row := range rows[1:] {
@@ -817,5 +817,66 @@ func TestSurveyUpgradeFromDeployedV6(t *testing.T) {
 	f.must(f.db.QueryRow(f.ctx, "SELECT in_registration FROM survey_questions WHERE id=$1", v.Numbers[0]).Scan(&registration))
 	if !registration {
 		t.Fatal("old draft lost form inclusion")
+	}
+}
+
+func TestSurveyExportReadableAnswers(t *testing.T) {
+	f := newSurveyFixture(t, "survey_export_labels_test")
+	for _, actor := range []int64{42, 43, 44} {
+		f.seeded(actor, "registered")
+	}
+	first := f.create("Участие", false)
+	second := f.create("Участие", false)
+	f.create("Неопубликованный вопрос", false)
+	firstOptions, secondOptions := f.options(first), f.options(second)
+	// Formula-looking content remains plain text, including Unicode and HTML characters.
+	const label = "=ДА & <готов> 👍"
+	f.exec("UPDATE survey_options SET label=$2 WHERE id=$1", firstOptions[0], label)
+	for _, id := range []int64{first, second} {
+		f.send(1, fmt.Sprintf("/question_publish %d", id), "")
+	}
+	f.send(42, "", fmt.Sprintf("qa_%d_%d", first, firstOptions[0]))
+	f.send(42, "", fmt.Sprintf("qa_%d_%d", second, secondOptions[1]))
+	f.send(43, "", fmt.Sprintf("qa_%d_%d", second, secondOptions[0]))
+	f.send(1, fmt.Sprintf("/question_close %d", second), "")
+	for _, participation := range []bool{false, true} {
+		f.svc.ParticipationEnabled = participation
+		exported, err := f.svc.Export(f.ctx, &pb.ExportRequest{Actor: 1})
+		f.must(err)
+		file, err := excelize.OpenReader(bytes.NewReader(exported.Xlsx))
+		f.must(err)
+		rows, err := file.GetRows("Sheet1")
+		f.must(err)
+		start := 14
+		if participation {
+			start = 16
+		}
+		if len(rows[0]) != start+2 || rows[0][start] != fmt.Sprintf("Ответ на вопрос «Участие» (№%d)", first) || rows[0][start+1] != fmt.Sprintf("Ответ на вопрос «Участие» (№%d)", second) {
+			t.Fatal("questions missing, ambiguous, misplaced, or include a draft", rows[0])
+		}
+		want := map[string][]string{"42": {label, "Нет"}, "43": {"", "Да <&>"}, "44": {"", ""}}
+		seen := map[string]bool{}
+		for rowIndex, row := range rows[1:] {
+			answers, ok := want[row[0]]
+			if !ok {
+				continue
+			}
+			seen[row[0]] = true
+			for i, answer := range answers {
+				cell, err := excelize.CoordinatesToCellName(start+i+1, rowIndex+2)
+				f.must(err)
+				actual, err := file.GetCellValue("Sheet1", cell)
+				f.must(err)
+				formula, err := file.GetCellFormula("Sheet1", cell)
+				f.must(err)
+				if actual != answer || formula != "" {
+					t.Fatalf("actor %s, question %d: got %q, want %q, formula %q", row[0], i, actual, answer, formula)
+				}
+			}
+		}
+		if len(seen) != len(want) {
+			t.Fatal("export lost participants", seen)
+		}
+		f.must(file.Close())
 	}
 }

@@ -15,6 +15,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
 	pb "registration.local/backend/api"
+	"registration.local/backend/internal/resources"
 	"registration.local/backend/internal/store"
 )
 
@@ -325,9 +326,25 @@ func (s *Service) Export(ctx context.Context, r *pb.ExportRequest) (*pb.ExportRe
 	if !s.ParticipationEnabled {
 		surveyColumnStart -= 2
 	}
+	surveyHeaderStyle, err := file.NewStyle(&excelize.Style{Font: &excelize.Font{Bold: true}, Alignment: &excelize.Alignment{WrapText: true, Vertical: "top"}})
+	if err != nil {
+		return nil, internal(err)
+	}
+	if len(surveyColumns) > 0 {
+		if err = file.SetRowHeight("Sheet1", 1, 60); err != nil {
+			return nil, internal(err)
+		}
+	}
 	for i, q := range surveyColumns {
+		column, _ := excelize.ColumnNumberToName(surveyColumnStart + i)
+		if err = file.SetColWidth("Sheet1", column, column, 42); err != nil {
+			return nil, internal(err)
+		}
 		cell, _ := excelize.CoordinatesToCellName(surveyColumnStart+i, 1)
-		if err = file.SetCellStr("Sheet1", cell, "question_"+number(q.id)+": "+q.title); err != nil {
+		if err = file.SetCellStr("Sheet1", cell, resources.SurveyAnswerHeader(q.title, q.id)); err != nil {
+			return nil, internal(err)
+		}
+		if err = file.SetCellStyle("Sheet1", cell, cell, surveyHeaderStyle); err != nil {
 			return nil, internal(err)
 		}
 	}
