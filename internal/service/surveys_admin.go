@@ -18,7 +18,8 @@ func (s *Service) surveyDraft(ctx context.Context, tx pgx.Tx, in *pb.Update, r *
 	var draftID int64
 	var stage, title, body, photo string
 	var options []string
-	err := tx.QueryRow(ctx, store.Q("survey_draft_get"), in.Actor).Scan(&draftID, &stage, &title, &body, &options, &photo)
+	var registration bool
+	err := tx.QueryRow(ctx, store.Q("survey_draft_get"), in.Actor).Scan(&draftID, &stage, &title, &body, &options, &photo, &registration)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}
@@ -32,7 +33,7 @@ func (s *Service) surveyDraft(ctx context.Context, tx pgx.Tx, in *pb.Update, r *
 	reply := func(code string) (bool, error) {
 		return true, r.enqueue(ctx, tx, in.Chat, false, "view", &pb.View{Kind: "survey_manage", Code: code}, in.Actor, 0, 0)
 	}
-	if in.Callback != "" && !strings.HasPrefix(in.Callback, "qm:") {
+	if in.Callback != "" && !strings.HasPrefix(in.Callback, "qm:") && !strings.HasPrefix(in.Callback, "qg:") {
 		return reply("survey_draft_busy")
 	}
 	if in.PhotoFileId != "" && stage == "title" {
@@ -41,12 +42,15 @@ func (s *Service) surveyDraft(ctx context.Context, tx pgx.Tx, in *pb.Update, r *
 			return reply("survey_photo_caption_prompt")
 		}
 		photo = in.PhotoFileId
-		if _, err = tx.Exec(ctx, store.Q("survey_draft_save"), in.Actor, stage, title, body, options, photo); err != nil {
+		if _, err = tx.Exec(ctx, store.Q("survey_draft_save"), in.Actor, stage, title, body, options, photo, registration); err != nil {
 			return true, err
 		}
 		return reply("survey_photo_title_prompt")
 	}
 	if in.PhotoFileId != "" && stage != "body" {
+		if stage == "audience" {
+			return s.surveyAudience(ctx, tx, in, r, draftID)
+		}
 		if stage == "mode" {
 			return s.surveyMode(ctx, tx, in, r, draftID)
 		}
@@ -95,8 +99,16 @@ func (s *Service) surveyDraft(ctx context.Context, tx pgx.Tx, in *pb.Update, r *
 		if in.Callback != fmt.Sprintf("qm:%d:0", draftID) && in.Callback != fmt.Sprintf("qm:%d:1", draftID) {
 			return s.surveyMode(ctx, tx, in, r, draftID)
 		}
+		registration = in.Callback == fmt.Sprintf("qm:%d:1", draftID)
+		stage = "audience"
+	case "audience":
+		prefix := fmt.Sprintf("qg:%d:", draftID)
+		audience := strings.TrimPrefix(in.Callback, prefix)
+		if !strings.HasPrefix(in.Callback, prefix) || !s.surveyAudienceAllowed(audience) {
+			return s.surveyAudience(ctx, tx, in, r, draftID)
+		}
 		var id int64
-		if err = tx.QueryRow(ctx, store.Q("survey_create"), in.Actor, title, body, in.Callback == fmt.Sprintf("qm:%d:1", draftID), photo).Scan(&id); err != nil {
+		if err = tx.QueryRow(ctx, store.Q("survey_create"), in.Actor, title, body, registration, photo, audience).Scan(&id); err != nil {
 			return true, err
 		}
 		for i, label := range options {
@@ -112,8 +124,11 @@ func (s *Service) surveyDraft(ctx context.Context, tx pgx.Tx, in *pb.Update, r *
 		}
 		return true, s.surveyPreview(ctx, tx, in, r, id)
 	}
-	if _, err = tx.Exec(ctx, store.Q("survey_draft_save"), in.Actor, stage, title, body, options, photo); err != nil {
+	if _, err = tx.Exec(ctx, store.Q("survey_draft_save"), in.Actor, stage, title, body, options, photo, registration); err != nil {
 		return true, err
+	}
+	if stage == "audience" {
+		return s.surveyAudience(ctx, tx, in, r, draftID)
 	}
 	if stage == "mode" {
 		return s.surveyMode(ctx, tx, in, r, draftID)
@@ -124,6 +139,20 @@ func (s *Service) surveyMode(ctx context.Context, tx pgx.Tx, in *pb.Update, r *r
 	return true, r.enqueue(ctx, tx, in.Chat, false, "view", &pb.View{Kind: "survey_manage", Code: "survey_mode_prompt", Buttons: []*pb.Button{
 		{LabelKey: "survey_mode_yes", Data: fmt.Sprintf("qm:%d:1", draftID)}, {LabelKey: "survey_mode_no", Data: fmt.Sprintf("qm:%d:0", draftID)},
 	}}, in.Actor, 0, 0)
+}
+
+// Reuse the ordinary broadcast audience allowlist and participation setting.
+func (s *Service) surveyAudienceAllowed(audience string) bool {
+	return audienceValid(audience) && (s.ParticipationEnabled || (audience != "yes" && audience != "maybe"))
+}
+func (s *Service) surveyAudience(ctx context.Context, tx pgx.Tx, in *pb.Update, r *replies, draftID int64) (bool, error) {
+	v := &pb.View{Kind: "survey_manage", Code: "survey_audience_prompt"}
+	for _, audience := range []string{"all", "registered", "incomplete", "staff", "counselor", "non_counselor", "yes", "maybe"} {
+		if s.surveyAudienceAllowed(audience) {
+			v.Buttons = append(v.Buttons, &pb.Button{LabelKey: "audience_" + audience, Data: fmt.Sprintf("qg:%d:%s", draftID, audience)})
+		}
+	}
+	return true, r.enqueue(ctx, tx, in.Chat, false, "view", v, in.Actor, 0, 0)
 }
 func (s *Service) surveyPreview(ctx context.Context, tx pgx.Tx, in *pb.Update, r *replies, id int64) error {
 	qs, err := readSurveys(ctx, tx, in.Actor, s.allowed(ctx, tx, in.Actor, "admin"))
@@ -141,7 +170,7 @@ func (s *Service) surveyPreview(ctx context.Context, tx pgx.Tx, in *pb.Update, r
 		return err
 	}
 	var count int64
-	if err = tx.QueryRow(ctx, store.Q("survey_audience_count")).Scan(&count); err != nil {
+	if err = tx.QueryRow(ctx, store.Q("audience_count"), q.audience).Scan(&count); err != nil {
 		return err
 	}
 	if q.status != "draft" {
@@ -151,7 +180,7 @@ func (s *Service) surveyPreview(ctx context.Context, tx pgx.Tx, in *pb.Update, r
 	if q.registration {
 		code = "survey_preview_registration"
 	}
-	return r.enqueue(ctx, tx, in.Chat, false, "view", &pb.View{Kind: "survey_manage", Code: code, Numbers: []int64{id, count}}, in.Actor, 0, 0)
+	return r.enqueue(ctx, tx, in.Chat, false, "view", &pb.View{Kind: "survey_manage", Code: code, Text: q.audience, Numbers: []int64{id, count}}, in.Actor, 0, 0)
 }
 func (s *Service) surveyAdmin(ctx context.Context, tx pgx.Tx, in *pb.Update, r *replies, parts []string) (bool, error) {
 	cmd := strings.Split(parts[0], "@")[0]
@@ -213,7 +242,7 @@ func (s *Service) surveyAdmin(ctx context.Context, tx pgx.Tx, in *pb.Update, r *
 	case "/question_preview":
 		return true, s.surveyPreview(ctx, tx, in, r, id)
 	case "/question_publish":
-		if q.status != "draft" {
+		if q.status != "draft" || !s.surveyAudienceAllowed(q.audience) {
 			return reply("survey_invalid_status")
 		}
 		var n int
@@ -224,7 +253,7 @@ func (s *Service) surveyAdmin(ctx context.Context, tx pgx.Tx, in *pb.Update, r *
 			return reply("survey_limit")
 		}
 		var broadcast int64
-		if err = tx.QueryRow(ctx, store.Q("broadcast_create"), in.Actor, "registered", "survey", int64(0), int64(0)).Scan(&broadcast); err != nil {
+		if err = tx.QueryRow(ctx, store.Q("broadcast_create"), in.Actor, q.audience, "survey", int64(0), int64(0)).Scan(&broadcast); err != nil {
 			return true, err
 		}
 		if _, err = tx.Exec(ctx, store.Q("survey_publish"), id, broadcast); err != nil {
@@ -235,7 +264,7 @@ func (s *Service) surveyAdmin(ctx context.Context, tx pgx.Tx, in *pb.Update, r *
 		if err != nil {
 			return true, err
 		}
-		if _, err = tx.Exec(ctx, store.Q("survey_broadcast_start"), broadcast, data, in.Actor, carrier(ctx)); err != nil {
+		if _, err = tx.Exec(ctx, store.Q("broadcast_start"), broadcast, q.audience, "view", data, in.Actor, int64(0), int64(0), carrier(ctx)); err != nil {
 			return true, err
 		}
 		if _, err = tx.Exec(ctx, store.Q("broadcast_status"), broadcast, "running"); err != nil {

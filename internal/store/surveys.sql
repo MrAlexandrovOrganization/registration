@@ -5,19 +5,19 @@ SELECT pg_advisory_xact_lock_shared(725046903);
 -- name: survey_lifecycle_write
 SELECT pg_advisory_xact_lock(725046903);
 -- name: survey_draft_start
-INSERT INTO survey_drafts(actor,stage) VALUES($1,'title') ON CONFLICT(actor) DO UPDATE SET id=DEFAULT,stage='title',title='',body='',options='{}',photo_file_id='';
+INSERT INTO survey_drafts(actor,stage) VALUES($1,'title') ON CONFLICT(actor) DO UPDATE SET id=DEFAULT,stage='title',title='',body='',options='{}',photo_file_id='',in_registration=false;
 -- name: survey_draft_get
-SELECT id,stage,title,body,options,photo_file_id FROM survey_drafts WHERE actor=$1;
+SELECT id,stage,title,body,options,photo_file_id,in_registration FROM survey_drafts WHERE actor=$1;
 -- name: survey_draft_save
-UPDATE survey_drafts SET stage=$2,title=$3,body=$4,options=$5,photo_file_id=$6 WHERE actor=$1;
+UPDATE survey_drafts SET stage=$2,title=$3,body=$4,options=$5,photo_file_id=$6,in_registration=$7 WHERE actor=$1;
 -- name: survey_draft_delete
 DELETE FROM survey_drafts WHERE actor=$1;
 -- name: survey_create
-INSERT INTO survey_questions(actor,title,body,in_registration,photo_file_id) VALUES($1,$2,$3,$4,$5) RETURNING id;
+INSERT INTO survey_questions(actor,title,body,in_registration,photo_file_id,audience) VALUES($1,$2,$3,$4,$5,$6) RETURNING id;
 -- name: survey_option_create
 INSERT INTO survey_options(question_id,position,label) VALUES($1,$2,$3);
 -- name: survey_load
-SELECT q.id,q.actor,q.title,q.body,q.photo_file_id,q.in_registration,q.status,COALESCE(q.broadcast_id,0),
+SELECT q.id,q.actor,q.title,q.body,q.photo_file_id,q.in_registration,q.status,COALESCE(q.broadcast_id,0),q.audience,
  o.id,o.label,COALESCE(a.option_id,0)
 FROM survey_questions q JOIN survey_options o ON o.question_id=q.id
 LEFT JOIN survey_answers a ON a.question_id=q.id AND a.telegram_id=$1
@@ -33,12 +33,6 @@ SELECT EXISTS(SELECT 1 FROM outbound_messages WHERE broadcast_id=$1 AND chat=$2)
 -- name: survey_answer
 INSERT INTO survey_answers(question_id,telegram_id,option_id) VALUES($1,$2,$3)
 ON CONFLICT(question_id,telegram_id) DO NOTHING;
--- name: survey_audience_count
-SELECT count(*) FROM users WHERE is_blocked=0 AND state='registered';
--- name: survey_broadcast_start
-INSERT INTO outbound_messages(chat,priority,kind,body,actor,broadcast_id,traceparent)
-SELECT telegram_id,'broadcast','view',$2,$3,$1,$4 FROM users WHERE is_blocked=0 AND state='registered'
-ON CONFLICT DO NOTHING;
 -- name: survey_counts
 SELECT o.label,count(a.telegram_id) FROM survey_options o
 LEFT JOIN survey_answers a ON a.question_id=o.question_id AND a.option_id=o.id

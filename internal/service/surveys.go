@@ -23,6 +23,7 @@ type surveyOption struct {
 type surveyQuestion struct {
 	id, actor, broadcast int64
 	title, body, status  string
+	audience             string
 	photo                string
 	registration         bool
 	options              []surveyOption
@@ -44,7 +45,7 @@ func readSurveys(ctx context.Context, tx pgx.Tx, actor int64, allDrafts bool) ([
 	for rows.Next() {
 		var q surveyQuestion
 		var o surveyOption
-		if err = rows.Scan(&q.id, &q.actor, &q.title, &q.body, &q.photo, &q.registration, &q.status, &q.broadcast, &o.id, &o.label, &q.answer); err != nil {
+		if err = rows.Scan(&q.id, &q.actor, &q.title, &q.body, &q.photo, &q.registration, &q.status, &q.broadcast, &q.audience, &o.id, &o.label, &q.answer); err != nil {
 			return nil, err
 		}
 		if len(result) == 0 || result[len(result)-1].id != q.id {

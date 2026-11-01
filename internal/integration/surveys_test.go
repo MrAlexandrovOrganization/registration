@@ -93,6 +93,10 @@ func (f *surveyFixture) click(actor int64, v *pb.View, label string) *pb.View {
 }
 func (f *surveyFixture) create(title string, registration bool) int64 {
 	f.t.Helper()
+	return f.createAudience(title, registration, "registered")
+}
+func (f *surveyFixture) createAudience(title string, registration bool, audience string) int64 {
+	f.t.Helper()
 	f.send(1, "/question_new", "")
 	f.send(1, title, "")
 	f.send(1, "<Текст> & вопрос?", "")
@@ -101,7 +105,17 @@ func (f *surveyFixture) create(title string, registration bool) int64 {
 	if registration {
 		index = 0
 	}
-	r, v := f.send(1, "", prompt.Buttons[index].Data)
+	_, prompt = f.send(1, "", prompt.Buttons[index].Data)
+	var callback string
+	for _, b := range prompt.Buttons {
+		if b.LabelKey == "audience_"+audience {
+			callback = b.Data
+		}
+	}
+	if callback == "" {
+		f.t.Fatal("missing audience", audience, prompt)
+	}
+	r, v := f.send(1, "", callback)
 	if len(r.DeliveryIds) != 2 || len(v.Numbers) != 2 {
 		f.t.Fatal("missing preview", v)
 	}
@@ -457,7 +471,8 @@ func TestSurveyDraftModeFencing(t *testing.T) {
 	if count != 0 {
 		t.Fatal("stale draft button created a question")
 	}
-	f.send(1, "", current.Buttons[0].Data)
+	_, v = f.send(1, "", current.Buttons[0].Data)
+	f.click(1, v, "audience_registered")
 	f.must(f.db.QueryRow(f.ctx, "SELECT count(*) FROM survey_questions WHERE title='New'").Scan(&count))
 	if count != 1 {
 		t.Fatal("current mode not accepted")
@@ -482,7 +497,8 @@ func TestSurveyPhotoQuestions(t *testing.T) {
 	_, mode := f.send(1, "Да\nНет", "")
 	// Restart between accepting the forwarded photo and finishing the wizard.
 	f.svc = &service.Service{DB: f.db, RootID: 1, BotID: 1000}
-	r, v := f.send(1, "", mode.Buttons[0].Data)
+	_, audience := f.send(1, "", mode.Buttons[0].Data)
+	r, v := f.send(1, "", audience.Buttons[1].Data)
 	q := v.Numbers[0]
 	options := f.options(q)
 	var body []byte
@@ -571,6 +587,7 @@ func TestSurveyPhotoBeforeTitle(t *testing.T) {
 		}
 		_, v = f.send(1, "Yes\nNo", "")
 		_, v = f.send(1, "", v.Buttons[0].Data)
+		v = f.click(1, v, "audience_registered")
 		var photo, saved string
 		f.must(f.db.QueryRow(f.ctx, "SELECT photo_file_id,body FROM survey_questions WHERE id=$1", v.Numbers[0]).Scan(&photo, &saved))
 		expected := caption
@@ -586,7 +603,7 @@ func TestSurveyPhotoBeforeTitle(t *testing.T) {
 func TestSurveyUpgradeFromDeployedV5(t *testing.T) {
 	f := newSurveyFixture(t, "survey_upgrade_v5_test")
 	// Reconstruct the deployed schema without touching any existing v1-v5 object.
-	f.exec("DROP VIEW survey_participants; DROP TABLE survey_answers,survey_options,survey_questions,survey_drafts; DELETE FROM schema_migrations WHERE version=6")
+	f.exec("DROP VIEW survey_participants; DROP TABLE survey_answers,survey_options,survey_questions,survey_drafts; DELETE FROM schema_migrations WHERE version>=6")
 	if store.CheckSchema(f.ctx, f.db) == nil {
 		t.Fatal("v5 must require the new migration")
 	}
@@ -620,8 +637,8 @@ func TestSurveyUpgradeFromDeployedV5(t *testing.T) {
 	}
 	var version, history int
 	f.must(f.db.QueryRow(f.ctx, "SELECT max(version),count(*) FROM schema_migrations").Scan(&version, &history))
-	if version != 6 || history != 6 {
-		t.Fatal("feature must add exactly one migration", version, history)
+	if version != 7 || history != 7 {
+		t.Fatal("expected complete migration history", version, history)
 	}
 	q := f.create("Photo in one migration", true)
 	var photo string
@@ -649,5 +666,156 @@ func TestAnsweredSurveyBroadcastIsNotResent(t *testing.T) {
 	f.must(f.db.QueryRow(f.ctx, "SELECT status FROM outbound_messages WHERE id=$1", job).Scan(&state))
 	if state != "cancelled" {
 		t.Fatal("obsolete invitation was not cancelled")
+	}
+}
+
+func TestSurveyBroadcastAudiences(t *testing.T) {
+	f := newSurveyFixture(t, "survey_audiences_test")
+	f.svc.ParticipationEnabled = true
+	for _, actor := range []int64{1, 42, 44, 45, 46} {
+		f.seeded(actor, "registered")
+	}
+	f.seeded(43, "name")
+	f.exec("UPDATE users SET is_staff=1 WHERE telegram_id IN (44,46)")
+	f.exec("UPDATE users SET is_counselor=1 WHERE telegram_id=45")
+	f.exec("UPDATE users SET is_blocked=1 WHERE telegram_id=46")
+	f.exec("UPDATE users SET will_drive='Обязательно! 🤩' WHERE telegram_id=42")
+	f.exec("UPDATE users SET will_drive='Пока думаю 🤔' WHERE telegram_id=43")
+	var staffQuestion int64
+	for _, tc := range []struct {
+		audience string
+		want     []int64
+	}{
+		{"all", []int64{1, 42, 43, 44, 45}},
+		{"registered", []int64{1, 42, 44, 45}},
+		{"incomplete", []int64{43}},
+		{"staff", []int64{44}},
+		{"counselor", []int64{45}},
+		{"non_counselor", []int64{1, 42, 43, 44}},
+		{"yes", []int64{42}},
+		{"maybe", []int64{43}},
+	} {
+		q := f.createAudience(tc.audience, false, tc.audience)
+		_, preview := f.send(1, fmt.Sprintf("/question_preview %d", q), "")
+		if preview.Text != tc.audience || preview.Numbers[1] != int64(len(tc.want)) {
+			t.Fatal("incorrect audience preview", preview)
+		}
+		f.send(1, fmt.Sprintf("/question_publish %d", q), "")
+		f.send(1, fmt.Sprintf("/question_publish %d", q), "")
+		var got []int64
+		var audience string
+		f.must(f.db.QueryRow(f.ctx, `SELECT b.audience,ARRAY(SELECT chat FROM outbound_messages WHERE broadcast_id=b.id ORDER BY chat) FROM survey_questions q JOIN broadcasts b ON b.id=q.broadcast_id WHERE q.id=$1`, q).Scan(&audience, &got))
+		if audience != tc.audience || !slices.Equal(got, tc.want) {
+			t.Fatal(tc.audience, got, tc.want)
+		}
+		f.must(f.db.QueryRow(f.ctx, "SELECT ARRAY(SELECT telegram_id FROM survey_participants WHERE question_id=$1 ORDER BY telegram_id)", q).Scan(&got))
+		if !slices.Equal(got, tc.want) {
+			t.Fatal("results include people outside audience", tc.audience, got)
+		}
+		if tc.audience == "staff" {
+			staffQuestion = q
+		}
+	}
+	// Changing group membership later must not change the publication snapshot.
+	f.exec("UPDATE users SET is_staff=1 WHERE telegram_id=42")
+	option := f.options(staffQuestion)[0]
+	f.send(42, "", fmt.Sprintf("qa_%d_%d", staffQuestion, option))
+	if f.answer(staffQuestion, 42) != 0 {
+		t.Fatal("accepted a callback from outside the original audience")
+	}
+	f.send(44, "", fmt.Sprintf("qa_%d_%d", staffQuestion, option))
+	if f.answer(staffQuestion, 44) != option {
+		t.Fatal("targeted answer was lost")
+	}
+	// Form inclusion remains independent of the broadcast audience.
+	f.svc.ParticipationEnabled = false
+	q := f.createAudience("Staff and new participants", true, "counselor")
+	f.send(1, fmt.Sprintf("/question_publish %d", q), "")
+	f.seeded(50, "new")
+	_, v := f.send(50, "/start", "")
+	if v.Kind != "survey_question" || v.Numbers[0] != q {
+		t.Fatal("form inclusion incorrectly filtered by audience", v)
+	}
+}
+
+func TestSurveyAudienceDraftFencing(t *testing.T) {
+	f := newSurveyFixture(t, "survey_audience_draft_test")
+	prompt := func() *pb.View {
+		f.send(1, "/question_new", "")
+		f.send(1, "Question", "")
+		f.send(1, "Body", "")
+		_, v := f.send(1, "A\nB", "")
+		_, v = f.send(1, "", v.Buttons[1].Data)
+		return v
+	}
+	old := prompt()
+	current := prompt()
+	// Durable draft survives process restart, rejects stale or forged audience callbacks.
+	f.svc = &service.Service{DB: f.db, BotID: 1000, RootID: 1}
+	for _, callback := range []string{old.Buttons[0].Data, strings.Replace(current.Buttons[0].Data, ":all", ":invalid", 1), strings.Replace(current.Buttons[0].Data, ":all", ":yes", 1)} {
+		_, v := f.send(1, "", callback)
+		if v.Code != "survey_audience_prompt" {
+			t.Fatal("invalid audience advanced draft", v)
+		}
+		for _, b := range v.Buttons {
+			if b.LabelKey == "audience_yes" || b.LabelKey == "audience_maybe" {
+				t.Fatal("disabled participation audience offered")
+			}
+		}
+	}
+	var count int
+	f.must(f.db.QueryRow(f.ctx, "SELECT count(*) FROM survey_questions").Scan(&count))
+	if count != 0 {
+		t.Fatal("stale or forged audience created question")
+	}
+	v := f.click(1, current, "audience_staff")
+	if v.Text != "staff" {
+		t.Fatal("current audience not accepted", v)
+	}
+	// Empty audiences can be previewed and published without accidental broadening.
+	f.send(1, fmt.Sprintf("/question_publish %d", v.Numbers[0]), "")
+	f.must(f.db.QueryRow(f.ctx, "SELECT count(*) FROM outbound_messages WHERE broadcast_id IS NOT NULL").Scan(&count))
+	if count != 0 {
+		t.Fatal("empty audience expanded to all users")
+	}
+}
+
+func TestSurveyUpgradeFromDeployedV6(t *testing.T) {
+	f := newSurveyFixture(t, "survey_upgrade_v6_test")
+	f.seeded(42, "registered")
+	q := f.create("Existing", false)
+	f.send(1, fmt.Sprintf("/question_publish %d", q), "")
+	option := f.options(q)[0]
+	f.send(42, "", fmt.Sprintf("qa_%d_%d", q, option))
+	f.send(1, "/question_new", "")
+	f.send(1, "Old draft", "")
+	f.send(1, "Body", "")
+	_, mode := f.send(1, "A\nB", "")
+	// Reconstruct schema 006 in this disposable fixture, leaving its feature data intact.
+	f.exec("ALTER TABLE survey_questions DROP COLUMN audience; ALTER TABLE survey_drafts DROP COLUMN in_registration; ALTER TABLE survey_drafts DROP CONSTRAINT survey_drafts_stage_check; ALTER TABLE survey_drafts ADD CONSTRAINT survey_drafts_stage_check CHECK(stage IN ('title','body','options','mode')); DELETE FROM schema_migrations WHERE version=7")
+	var before string
+	const history = "SELECT jsonb_agg(to_jsonb(m) ORDER BY version)::text FROM schema_migrations m WHERE version<=6"
+	f.must(f.db.QueryRow(f.ctx, history).Scan(&before))
+	if store.CheckSchema(f.ctx, f.db) == nil {
+		t.Fatal("v6 must require migration 007")
+	}
+	f.must(store.Migrate(f.ctx, f.db))
+	f.must(store.Migrate(f.ctx, f.db))
+	f.must(store.CheckSchema(f.ctx, f.db))
+	var after, audience string
+	f.must(f.db.QueryRow(f.ctx, history).Scan(&after))
+	f.must(f.db.QueryRow(f.ctx, "SELECT audience FROM survey_questions WHERE id=$1", q).Scan(&audience))
+	if before != after || audience != "registered" || f.answer(q, 42) != option {
+		t.Fatal("upgrade changed existing question, answer or migration history")
+	}
+	_, v := f.send(1, "", mode.Buttons[0].Data)
+	if v.Code != "survey_audience_prompt" {
+		t.Fatal("old draft cannot continue", v)
+	}
+	v = f.click(1, v, "audience_staff")
+	var registration bool
+	f.must(f.db.QueryRow(f.ctx, "SELECT in_registration FROM survey_questions WHERE id=$1", v.Numbers[0]).Scan(&registration))
+	if !registration {
+		t.Fatal("old draft lost form inclusion")
 	}
 }
