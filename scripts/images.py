@@ -213,6 +213,8 @@ def locked_deploy():
 
 
 def deploy():
+    if (ROOT / ".retired").exists():
+        raise ValueError("Retired source: activation refused")
     if os.environ.get("IMAGE_MANIFEST_B64"):
         manifest = json.loads(base64.b64decode(os.environ["IMAGE_MANIFEST_B64"], validate=True))
     else:

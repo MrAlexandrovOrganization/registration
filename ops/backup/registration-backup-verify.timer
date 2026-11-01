@@ -1,0 +1,11 @@
+[Unit]
+Description=Monthly isolated registration restore drill
+
+[Timer]
+OnCalendar=*-*-01 04:35:00 Europe/Moscow
+RandomizedDelaySec=120
+Persistent=true
+Unit=registration-backup-verify.service
+
+[Install]
+WantedBy=timers.target

@@ -12,7 +12,7 @@ image-publish:
 	python3 scripts/images.py publish
 image-deploy:
 	python3 scripts/images.py deploy
-image-activate:
+image-activate: active-check
 	$(IMAGE_COMPOSE) stop backend
 	$(IMAGE_COMPOSE) up -d --no-build --pull never --wait --wait-timeout 180 postgres
 	$(IMAGE_COMPOSE) run --rm --no-deps --pull never migrate

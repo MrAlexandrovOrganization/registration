@@ -18,3 +18,4 @@ __pycache__/
 
 # Google service account credentials (never include in image context or Git).
 /secrets/
+.retired

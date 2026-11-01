@@ -1,0 +1,17 @@
+services:
+  backend:
+    networks: !override [database, api, prometheus]
+    extra_hosts:
+      - "kafka=${REGISTRATION_KAFKA_HOST:?Set broker tailnet address}"
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://${REGISTRATION_OTLP_HOST:?Set trace tailnet address}:4317
+    mem_limit: 192m
+    mem_reservation: 32m
+    cpus: 0.5
+    oom_score_adj: -500
+  postgres:
+    image: ${REGISTRATION_POSTGRES_IMAGE:?Set migrated PostgreSQL digest}
+    mem_limit: 384m
+    mem_reservation: 96m
+    cpus: 0.75
+    oom_score_adj: -500

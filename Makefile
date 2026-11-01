@@ -60,7 +60,7 @@ validate-data: proto-gen
 	go run ./cmd/registration validate-data
 compose-build:
 	$(DOCKER_COMPOSE) build backend
-up:
+up: active-check
 	$(MAKE) compose-build
 	$(DOCKER_COMPOSE) stop backend
 	$(MAKE) database-up
@@ -84,7 +84,7 @@ versions:
 	@$(foreach v,$(VERSION_VARS),printf '%s=%s\n' '$(v)' '$($(v))';)
 
 .PHONY: database-up
-database-up:
+database-up: active-check
 	$(DOCKER_COMPOSE) up -d --wait --wait-timeout 180 postgres
 
 .PHONY: migrate-compose
@@ -92,7 +92,7 @@ migrate-compose:
 	$(DOCKER_COMPOSE) run --rm --no-deps --pull never migrate
 
 .PHONY: backup
-backup:
+backup: active-check
 	@python3 scripts/backup.py "$(BACKUP_DIR)" $(DOCKER_COMPOSE)
 
 include makefiles/images.mk
@@ -110,3 +110,16 @@ sheets-config-check:
 	env -u POSTGRES_PASSWORD -u BACKEND_TOKEN -u BOT_ID -u ROOT_ID GOOGLE_SHEETS_SPREADSHEET_ID=synthetic-fixture-spreadsheet GOOGLE_SHEETS_CREDENTIALS_FILE=/dev/null $(DOCKER_COMPOSE_BASE) --env-file config/test.env -f compose/docker-compose.yml -f compose/docker-compose.sheets.yml config --quiet
 
 config-check: sheets-config-check
+
+.PHONY: active-check finland-config-check
+active-check:
+	@test ! -e .retired || { echo 'Retired source: activation refused' >&2; exit 1; }
+finland-config-check:
+	$(DOCKER_COMPOSE_BASE) --env-file config/test.env -f compose/docker-compose.yml -f compose/compose.finland.yml config --no-interpolate --no-env-resolution --quiet
+check: finland-config-check
+
+include makefiles/backup.mk
+
+.PHONY: ci-ssh-deploy
+ci-ssh-deploy:
+	python3 scripts/ci_ssh_deploy.py

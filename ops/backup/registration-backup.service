@@ -1,0 +1,23 @@
+[Unit]
+Description=Pull private registration backup from server
+Wants=network-online.target
+After=network-online.target tailscaled.service
+StartLimitIntervalSec=3600
+StartLimitBurst=3
+
+[Service]
+Type=oneshot
+User=maxim
+Group=maxim
+ExecStart=/usr/bin/python3 /home/maxim/.local/lib/registration-backup/registration_backup.py pull
+TimeoutStartSec=15min
+Restart=on-failure
+RestartSec=5min
+UMask=0077
+Nice=10
+IOSchedulingClass=idle
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/maxim/backups/registration

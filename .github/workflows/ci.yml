@@ -78,7 +78,7 @@ jobs:
   deploy:
     name: Deploy published digests to VM
     needs: images
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.DEPLOY_ENABLED == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     permissions:
@@ -88,23 +88,13 @@ jobs:
       group: deploy-production
       cancel-in-progress: false
     steps:
-      - name: Deploy checked revision and published images
-        uses: appleboy/ssh-action@v1.2.2
+      - uses: actions/checkout@v4
+      - name: Deliver checked SHA and immutable images
+        run: make ci-ssh-deploy
         env:
-          PROJECT_PATH: ${{ secrets.VM_PROJECT_PATH }}
           DEPLOY_SHA: ${{ github.sha }}
           IMAGE_MANIFEST_B64: ${{ needs.images.outputs.manifest }}
           GHCR_USER: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          host: ${{ secrets.VM_HOST }}
-          username: ${{ secrets.VM_USER }}
-          key: ${{ secrets.VM_SSH_KEY }}
-          envs: PROJECT_PATH,DEPLOY_SHA,IMAGE_MANIFEST_B64,GHCR_USER,GHCR_TOKEN
-          command_timeout: 35m
-          script: |
-            set -eu
-            cd "${PROJECT_PATH:?}"
-            test "$(git rev-parse --show-toplevel)" = "$(pwd -P)"
-            git fetch --quiet origin refs/heads/main
-            git show "$DEPLOY_SHA:makefiles/ci-deploy.mk" | make -f - ci-deploy
+          DEPLOY_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}

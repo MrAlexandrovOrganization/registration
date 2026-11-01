@@ -569,3 +569,7 @@ unchanged; clients address services or explicit network aliases.
 и раз в минуту, включая удалённые строки и ответы дополнительных вопросов.
 Настройка service account, отдельный Compose overlay, права и диагностика —
 [GOOGLE_SHEETS.md](docs/GOOGLE_SHEETS.md).
+
+## Перенос на Finland
+
+Размещение, ограничения и откат: [FINLAND-MIGRATION.md](docs/FINLAND-MIGRATION.md).
