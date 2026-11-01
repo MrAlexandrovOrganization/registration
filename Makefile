@@ -51,7 +51,7 @@ test-compose:
 build: proto-gen
 	go build -trimpath -o .bin/registration ./cmd/registration
 config-check:
-	env -u POSTGRES_PASSWORD -u BACKEND_TOKEN -u BOT_ID -u ROOT_ID $(DOCKER_COMPOSE) --env-file config/test.env config --quiet
+	env -u POSTGRES_PASSWORD -u BACKEND_TOKEN -u BOT_ID -u ROOT_ID GOOGLE_SHEETS_SPREADSHEET_ID=synthetic-fixture-spreadsheet GOOGLE_SHEETS_CREDENTIALS_FILE=/dev/null $(DOCKER_COMPOSE) --env-file config/test.env config --quiet
 migrate: proto-gen
 	go run ./cmd/registration migrate
 import-dry-run: proto-gen
@@ -104,3 +104,9 @@ compose-layout-check:
 	$(DOCKER_COMPOSE_BASE) --env-file /dev/null -f compose/docker-compose.yml --profile '*' config --no-interpolate --no-env-resolution --quiet
 
 check: compose-layout-check
+
+.PHONY: sheets-config-check
+sheets-config-check:
+	env -u POSTGRES_PASSWORD -u BACKEND_TOKEN -u BOT_ID -u ROOT_ID GOOGLE_SHEETS_SPREADSHEET_ID=synthetic-fixture-spreadsheet GOOGLE_SHEETS_CREDENTIALS_FILE=/dev/null $(DOCKER_COMPOSE_BASE) --env-file config/test.env -f compose/docker-compose.yml -f compose/docker-compose.sheets.yml config --quiet
+
+config-check: sheets-config-check

@@ -15,3 +15,6 @@ __pycache__/
 
 # Local image release manifests and activation state
 /.images/
+
+# Google service account credentials (never include in image context or Git).
+/secrets/

@@ -31,6 +31,13 @@ class DeliveryTests(unittest.TestCase):
         patch.object(images, "specs", return_value={"app": {"context": "."}}).start()
         patch.dict(os.environ, {"IMAGE_COMPOSE_FILE": "compose.yaml"}, clear=True).start()
 
+    def test_private_runtime_selector_reaches_activation_without_affecting_build(self):
+        os.environ["IMAGE_RUNTIME_COMPOSE_FILES"] = (
+            "compose/docker-compose.yml compose/docker-compose.sheets.yml"
+        )
+        self.assertIn("compose/docker-compose.sheets.yml", images.compose(runtime=True))
+        self.assertNotIn("compose/docker-compose.sheets.yml", images.compose())
+
     def test_operate_uses_active_image_after_configuration_commit(self):
         images.STATE.mkdir()
         (images.STATE / "current.json").write_text(json.dumps(self.manifest))

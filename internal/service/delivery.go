@@ -10,12 +10,10 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/xuri/excelize/v2"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
 	pb "registration.local/backend/api"
-	"registration.local/backend/internal/resources"
 	"registration.local/backend/internal/store"
 )
 
@@ -272,139 +270,4 @@ func (s *Service) Complete(ctx context.Context, r *pb.Completion) (*pb.Receipt, 
 	}
 	slog.InfoContext(ctx, "delivery.completed", "outcome", r.Outcome, "state", state, "attempts", attempts+increment)
 	return &pb.Receipt{}, nil
-}
-
-func (s *Service) Export(ctx context.Context, r *pb.ExportRequest) (*pb.ExportResponse, error) {
-	internal := func(err error) error { return persistenceError(ctx, err) }
-	tx, err := s.DB.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
-	if err != nil {
-		return nil, internal(err)
-	}
-	defer tx.Rollback(ctx)
-	if !s.allowed(ctx, tx, r.Actor, "table_viewer") {
-		return nil, status.Error(codes.PermissionDenied, "permission denied")
-	}
-	surveyColumns, surveyAnswers, err := loadSurveyExport(ctx, tx)
-	if err != nil {
-		return nil, internal(err)
-	}
-	rows, err := tx.Query(ctx, store.Q("export"))
-	if err != nil {
-		return nil, internal(err)
-	}
-	defer rows.Close()
-	file := excelize.NewFile()
-	defer file.Close()
-	headers := []string{"telegram_id", "username", "telegram_sername", "name", "birth_date", "group", "phone", "expectations", "will_drive", "trip_attendance", "is_staff", "is_counselor", "is_blocked", "first_start_source", "has_registered", "first_start_at_utc"}
-	for i, h := range headers {
-		if !s.ParticipationEnabled && (i == 8 || i == 9) {
-			continue
-		}
-		col := i + 1
-		if !s.ParticipationEnabled && i > 9 {
-			col -= 2
-		}
-		cell, _ := excelize.CoordinatesToCellName(col, 1)
-		if err = file.SetCellStr("Sheet1", cell, h); err != nil {
-			return nil, internal(err)
-		}
-		width := 22.0
-		switch h {
-		case "name", "telegram_sername":
-			width = 36
-		case "expectations":
-			width = 60
-		case "first_start_at_utc":
-			width = 24
-		}
-		column, _ := excelize.ColumnNumberToName(col)
-		if err = file.SetColWidth("Sheet1", column, column, width); err != nil {
-			return nil, internal(err)
-		}
-	}
-	surveyColumnStart := len(headers) + 1
-	if !s.ParticipationEnabled {
-		surveyColumnStart -= 2
-	}
-	surveyHeaderStyle, err := file.NewStyle(&excelize.Style{Font: &excelize.Font{Bold: true}, Alignment: &excelize.Alignment{WrapText: true, Vertical: "top"}})
-	if err != nil {
-		return nil, internal(err)
-	}
-	if len(surveyColumns) > 0 {
-		if err = file.SetRowHeight("Sheet1", 1, 60); err != nil {
-			return nil, internal(err)
-		}
-	}
-	for i, q := range surveyColumns {
-		column, _ := excelize.ColumnNumberToName(surveyColumnStart + i)
-		if err = file.SetColWidth("Sheet1", column, column, 42); err != nil {
-			return nil, internal(err)
-		}
-		cell, _ := excelize.CoordinatesToCellName(surveyColumnStart+i, 1)
-		if err = file.SetCellStr("Sheet1", cell, resources.SurveyAnswerHeader(q.title, q.id)); err != nil {
-			return nil, internal(err)
-		}
-		if err = file.SetCellStyle("Sheet1", cell, cell, surveyHeaderStyle); err != nil {
-			return nil, internal(err)
-		}
-	}
-	n := 2
-	for rows.Next() {
-		if n > 50001 {
-			return nil, status.Error(codes.ResourceExhausted, "export row limit")
-		}
-		values, err := rows.Values()
-		if err != nil {
-			return nil, internal(err)
-		}
-		for i, v := range values {
-			if !s.ParticipationEnabled && (i == 8 || i == 9) {
-				continue
-			}
-			text := ""
-			switch value := v.(type) {
-			case string:
-				text = value
-			case int64:
-				text = strconv.FormatInt(value, 10)
-			case int32:
-				text = strconv.FormatInt(int64(value), 10)
-			}
-			col := i + 1
-			if !s.ParticipationEnabled && i > 9 {
-				col -= 2
-			}
-			cell, _ := excelize.CoordinatesToCellName(col, n)
-			// SetCellStr, rather than formula-aware inference, prevents spreadsheet formula injection.
-			if err = file.SetCellStr("Sheet1", cell, text); err != nil {
-				return nil, internal(err)
-			}
-		}
-		actor := values[0].(int64)
-		for i, q := range surveyColumns {
-			cell, _ := excelize.CoordinatesToCellName(surveyColumnStart+i, n)
-			if err = file.SetCellStr("Sheet1", cell, surveyAnswers[actor][q.id]); err != nil {
-				return nil, internal(err)
-			}
-		}
-		n++
-	}
-	if err = rows.Err(); err != nil {
-		return nil, internal(err)
-	}
-	rows.Close()
-	if _, err = tx.Exec(ctx, store.Q("audit"), r.Actor, "export", 0); err != nil {
-		return nil, internal(err)
-	}
-	buffer, err := file.WriteToBuffer()
-	if err != nil {
-		return nil, internal(err)
-	}
-	if buffer.Len() > 12<<20 {
-		return nil, status.Error(codes.ResourceExhausted, "export byte limit")
-	}
-	if err = tx.Commit(ctx); err != nil {
-		return nil, internal(err)
-	}
-	return &pb.ExportResponse{Xlsx: buffer.Bytes()}, nil
 }

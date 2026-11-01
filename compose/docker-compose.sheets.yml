@@ -1,0 +1,15 @@
+# Opt-in overlay for a dedicated Google worksheet. Never enable in test fixtures.
+services:
+  backend:
+    environment:
+      GOOGLE_SHEETS_SPREADSHEET_ID: ${GOOGLE_SHEETS_SPREADSHEET_ID:?Google spreadsheet ID required}
+      GOOGLE_SHEETS_SHEET_ID: ${GOOGLE_SHEETS_SHEET_ID:-0}
+      GOOGLE_SHEETS_SYNC_INTERVAL: ${GOOGLE_SHEETS_SYNC_INTERVAL:-1m}
+      GOOGLE_SHEETS_CREDENTIALS_FILE: /run/secrets/google-sheets.json
+    volumes:
+      - type: bind
+        source: ${GOOGLE_SHEETS_CREDENTIALS_FILE:?Service account JSON path required}
+        target: /run/secrets/google-sheets.json
+        read_only: true
+        bind:
+          create_host_path: false

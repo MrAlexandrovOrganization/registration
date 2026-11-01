@@ -22,6 +22,7 @@ import (
 	pb "registration.local/backend/api"
 	"registration.local/backend/internal/queue"
 	"registration.local/backend/internal/service"
+	"registration.local/backend/internal/sheets"
 	"registration.local/backend/internal/store"
 )
 
@@ -71,6 +72,13 @@ func Serve(ctx context.Context, c Config) error {
 		return err
 	}
 	svc := &service.Service{DB: db, RootID: c.RootID, BotID: c.BotID, ParticipationEnabled: c.ParticipationEnabled}
+	var sheetsClient *sheets.Client
+	if c.SheetsSpreadsheetID != "" {
+		sheetsClient, err = sheets.New(ctx, c.SheetsCredentialsFile, c.SheetsSpreadsheetID, c.SheetsSheetID)
+		if err != nil {
+			return err
+		}
+	}
 	registry := prometheus.NewRegistry()
 	registry.MustRegister(prometheus.NewGoCollector(), prometheus.NewProcessCollector(prometheus.ProcessCollectorOpts{}))
 	calls := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "registration_rpc_total", Help: "RPC results"}, []string{"method", "code"})
@@ -110,6 +118,14 @@ func Serve(ctx context.Context, c Config) error {
 	run, stop := context.WithCancel(ctx)
 	defer stop()
 	var workers sync.WaitGroup
+	if sheetsClient != nil {
+		attempts := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "registration_sheets_sync_total", Help: "Sheets synchronization attempts"}, []string{"result"})
+		success := prometheus.NewGauge(prometheus.GaugeOpts{Name: "registration_sheets_last_success_timestamp_seconds", Help: "Last successful Sheets synchronization, Unix time; zero until first success"})
+		registry.MustRegister(attempts, success)
+		workers.Go(func() {
+			(&sheets.Worker{Service: svc, Writer: sheetsClient, Interval: c.SheetsInterval, Attempts: attempts, LastSuccess: success}).Run(run)
+		})
+	}
 	writer := &kafka.Writer{Addr: kafka.TCP(c.Brokers...), Balancer: &kafka.Hash{}, RequiredAcks: kafka.RequireAll, Async: false, WriteTimeout: 5 * time.Second, ReadTimeout: 5 * time.Second, MaxAttempts: 3, AllowAutoTopicCreation: false}
 	workers.Go(func() {
 		defer writer.Close()
