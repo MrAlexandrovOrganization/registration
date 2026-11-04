@@ -13,23 +13,38 @@ import (
 
 type finalCampaign struct {
 	question, positive, draftID, sourceChat, sourceMessage int64
+	positiveLabel, negativeLabel                           string
 }
 
 type finalDraft struct {
-	id, question, positive      int64
-	sourceChat, sourceMessage   int64
-	previewChat, previewMessage int64
+	id, question, positive       int64
+	sourceChat, sourceMessage    int64
+	previewChat, previewMessage  int64
+	positiveLabel, negativeLabel string
+}
+
+func (d finalDraft) hasLabels() bool { return d.positiveLabel != "" && d.negativeLabel != "" }
+
+// The first label always confirms participation; the second always declines.
+// Reuse question-option normalization and UTF-16 limits without changing the
+// stable callback values or stored outcome strings.
+func finalButtonLabels(text string) (positive, negative string, ok bool) {
+	options, valid := surveyOptions(text)
+	if !valid || len(options) != 2 || strings.EqualFold(options[0], options[1]) {
+		return "", "", false
+	}
+	return options[0], options[1], true
 }
 
 func readFinalCampaign(ctx context.Context, tx pgx.Tx) (finalCampaign, error) {
 	var c finalCampaign
-	err := tx.QueryRow(ctx, store.Q("final_campaign")).Scan(&c.question, &c.positive, &c.draftID, &c.sourceChat, &c.sourceMessage)
+	err := tx.QueryRow(ctx, store.Q("final_campaign")).Scan(&c.question, &c.positive, &c.draftID, &c.sourceChat, &c.sourceMessage, &c.positiveLabel, &c.negativeLabel)
 	return c, err
 }
 
 func readFinalDraft(ctx context.Context, tx pgx.Tx, actor int64) (finalDraft, error) {
 	var d finalDraft
-	err := tx.QueryRow(ctx, store.Q("final_draft_get"), actor).Scan(&d.id, &d.question, &d.positive, &d.sourceChat, &d.sourceMessage, &d.previewChat, &d.previewMessage)
+	err := tx.QueryRow(ctx, store.Q("final_draft_get"), actor).Scan(&d.id, &d.question, &d.positive, &d.sourceChat, &d.sourceMessage, &d.previewChat, &d.previewMessage, &d.positiveLabel, &d.negativeLabel)
 	return d, err
 }
 
@@ -50,13 +65,24 @@ func (s *Service) finalDraftMessage(ctx context.Context, tx pgx.Tx, in *pb.Updat
 		_, err = tx.Exec(ctx, store.Q("final_draft_delete"), in.Actor)
 		return false, err
 	}
-	if d.sourceMessage != 0 {
+	if d.sourceMessage != 0 && d.hasLabels() {
 		return false, nil
 	}
-	if in.Callback != "" || in.MessageId <= 0 {
-		return true, r.enqueue(ctx, tx, in.Chat, false, "view", &pb.View{Kind: "final_manage", Code: "final_send_source"}, in.Actor, 0, 0)
+	if d.sourceMessage == 0 {
+		code := "final_send_source"
+		if in.Callback == "" && in.MessageId > 0 {
+			if _, err = tx.Exec(ctx, store.Q("final_draft_capture"), in.Actor, in.Chat, in.MessageId); err != nil {
+				return true, err
+			}
+			code = "final_buttons_prompt"
+		}
+		return true, r.enqueue(ctx, tx, in.Chat, false, "view", &pb.View{Kind: "final_manage", Code: code}, in.Actor, 0, 0)
 	}
-	if _, err = tx.Exec(ctx, store.Q("final_draft_capture"), in.Actor, in.Chat, in.MessageId); err != nil {
+	positive, negative, valid := finalButtonLabels(in.Text)
+	if in.Callback != "" || in.PhotoFileId != "" || !valid {
+		return true, r.enqueue(ctx, tx, in.Chat, false, "view", &pb.View{Kind: "final_manage", Code: "final_buttons_prompt"}, in.Actor, 0, 0)
+	}
+	if _, err = tx.Exec(ctx, store.Q("final_draft_labels"), in.Actor, positive, negative); err != nil {
 		return true, err
 	}
 	d, err = readFinalDraft(ctx, tx, in.Actor)
@@ -66,16 +92,21 @@ func (s *Service) finalDraftMessage(ctx context.Context, tx pgx.Tx, in *pb.Updat
 	return true, s.finalPreview(ctx, tx, in, r, d)
 }
 
+func finalPreviewView(d finalDraft) *pb.View {
+	v := finalInvitation(d.positiveLabel, d.negativeLabel)
+	v.Kind, v.Numbers = "final_preview", []int64{d.id}
+	for i, button := range v.Buttons {
+		button.Data = "preview_final_" + number(int64(i))
+	}
+	return v
+}
+
 func (s *Service) finalPreview(ctx context.Context, tx pgx.Tx, in *pb.Update, r *replies, d finalDraft) error {
 	sourceChat, sourceMessage := d.sourceChat, d.sourceMessage
 	if d.previewMessage > 0 {
 		sourceChat, sourceMessage = d.previewChat, d.previewMessage
 	}
-	v := finalInvitation()
-	v.Kind, v.Numbers = "final_preview", []int64{d.id}
-	for i, button := range v.Buttons {
-		button.Data = "preview_final_" + number(int64(i))
-	}
+	v := finalPreviewView(d)
 	if err := r.enqueue(ctx, tx, in.Chat, false, "copy", v, in.Actor, sourceChat, sourceMessage); err != nil {
 		return err
 	}
@@ -84,6 +115,8 @@ func (s *Service) finalPreview(ctx context.Context, tx pgx.Tx, in *pb.Update, r 
 		return err
 	}
 	info.Fields = append(info.Fields,
+		&pb.Field{Key: "final_positive_button", Value: d.positiveLabel},
+		&pb.Field{Key: "final_negative_button", Value: d.negativeLabel},
 		&pb.Field{Key: "final_draft", Value: number(d.id)},
 		&pb.Field{Key: "final_start_command", Value: "/final_start " + number(d.id)},
 	)
@@ -164,6 +197,9 @@ func (s *Service) finalAdmin(ctx context.Context, tx pgx.Tx, in *pb.Update, u *u
 			if err != nil {
 				return true, err
 			}
+			if !d.hasLabels() {
+				return notice("final_buttons_prompt")
+			}
 			if cmd == "/final_preview" {
 				return true, s.finalPreview(ctx, tx, in, r, d)
 			}
@@ -177,7 +213,7 @@ func (s *Service) finalAdmin(ctx context.Context, tx pgx.Tx, in *pb.Update, u *u
 			if missing != 0 {
 				return notice("final_missing_order")
 			}
-			if _, err = tx.Exec(ctx, store.Q("final_create"), d.question, d.positive, in.Actor, d.id, d.previewChat, d.previewMessage); err != nil {
+			if _, err = tx.Exec(ctx, store.Q("final_create"), d.question, d.positive, in.Actor, d.id, d.previewChat, d.previewMessage, d.positiveLabel, d.negativeLabel); err != nil {
 				return true, err
 			}
 			if _, err = tx.Exec(ctx, store.Q("audit"), in.Actor, "final_start", d.question); err != nil {

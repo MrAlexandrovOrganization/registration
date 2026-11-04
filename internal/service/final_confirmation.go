@@ -13,10 +13,10 @@ import (
 
 const finalCapacity = 90
 
-func finalInvitation() *pb.View {
+func finalInvitation(positiveLabel, negativeLabel string) *pb.View {
 	return &pb.View{Kind: "notice", Code: "final_invitation", Buttons: []*pb.Button{
-		{LabelKey: "final_yes", Data: "final:yes"},
-		{LabelKey: "final_no", Data: "final:no"},
+		{Label: positiveLabel, LabelKey: "final_yes", Data: "final:yes"},
+		{Label: negativeLabel, LabelKey: "final_no", Data: "final:no"},
 	}}
 }
 
@@ -52,7 +52,7 @@ func fillFinalConfirmations(ctx context.Context, tx pgx.Tx) error {
 	if err != nil {
 		return err
 	}
-	data, err := protojson.Marshal(finalInvitation())
+	data, err := protojson.Marshal(finalInvitation(campaign.positiveLabel, campaign.negativeLabel))
 	if err != nil {
 		return err
 	}
@@ -126,9 +126,10 @@ func refreshFinalDelivery(ctx context.Context, tx pgx.Tx, d *pb.Delivery) (bool,
 		if errors.Is(err, pgx.ErrNoRows) {
 			return false, nil
 		}
-		if err != nil || draft.id != d.View.Numbers[0] || draft.sourceMessage <= 0 {
+		if err != nil || draft.id != d.View.Numbers[0] || draft.sourceMessage <= 0 || !draft.hasLabels() {
 			return false, err
 		}
+		d.View = finalPreviewView(draft)
 		d.SourceChat, d.SourceMessage = draft.sourceChat, draft.sourceMessage
 		if draft.previewMessage > 0 {
 			d.SourceChat, d.SourceMessage = draft.previewChat, draft.previewMessage

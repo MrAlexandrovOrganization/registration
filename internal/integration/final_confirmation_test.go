@@ -26,7 +26,7 @@ func dropFinalConfirmationSchema(t *testing.T, db *pgxpool.Pool) {
 	_, err := db.Exec(t.Context(), `DROP VIEW final_confirmation_eligible;
 DROP TABLE final_confirmation_invitations,final_confirmation_campaign,final_confirmation_drafts;
 ALTER TABLE users DROP COLUMN registration_completed_at;
-DELETE FROM schema_migrations WHERE version=8`)
+DELETE FROM schema_migrations WHERE version>=8`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,11 @@ func finalCount(f *surveyFixture, where string) int {
 func prepareFinalConfirmation(f *surveyFixture, question, positive int64) int64 {
 	f.t.Helper()
 	f.send(1, fmt.Sprintf("/final_new %d %d", question, positive), "")
-	r, preview := f.send(1, "Synthetic forwarded invitation <&>", "")
+	_, prompt := f.send(1, "Synthetic forwarded invitation <&>", "")
+	if prompt.Code != "final_buttons_prompt" {
+		f.t.Fatal("button names were not requested", prompt)
+	}
+	r, preview := f.send(1, "Да, еду ✅\nНет, не смогу 😢", "")
 	if preview.Code != "final_preview_info" || len(r.DeliveryIds) != 2 || finalCount(f, "true") != 0 {
 		f.t.Fatal("preparation did not produce a preview without inviting participants", preview)
 	}
@@ -101,16 +105,35 @@ func TestFinalConfirmationForwardedPreviewAndStart(t *testing.T) {
 	}
 	r, err := f.svc.Accept(f.ctx, &pb.Update{Id: f.seq.Add(1), Actor: 1, Chat: 1, ChatType: "private", Kind: "message", MessageId: 350, PhotoFileId: "synthetic-photo", PhotoCaption: "<Custom caption>"})
 	f.must(err)
+	if len(r.DeliveryIds) != 1 {
+		t.Fatal("a forwarded message should request labels before previewing")
+	}
 	var draft int64
 	f.must(f.db.QueryRow(f.ctx, "SELECT id FROM final_confirmation_drafts WHERE actor=1").Scan(&draft))
 	start := fmt.Sprintf("/final_start %d", draft)
 	_, v := f.send(1, start, "")
+	if v.Code != "final_buttons_prompt" || finalCount(f, "true") != 0 {
+		t.Fatal("started without explicit button names", v)
+	}
+	for _, invalid := range []string{"Одна кнопка", "Да\nДа", "Да\nНет\nВозможно", strings.Repeat("😀", 31) + "\nНет"} {
+		_, v = f.send(1, invalid, "")
+		if v.Code != "final_buttons_prompt" {
+			t.Fatal("invalid labels were accepted", v)
+		}
+	}
+	r, _ = f.send(1, "  Точно буду ✅  \r\n Не смогу 😢 ", "")
+	f.must(f.db.QueryRow(f.ctx, "SELECT id FROM final_confirmation_drafts WHERE actor=1").Scan(&draft))
+	start = fmt.Sprintf("/final_start %d", draft)
+	_, v = f.send(1, start, "")
 	if v.Code != "final_preview_pending" || finalCount(f, "true") != 0 {
 		t.Fatal("started before preview delivery", v)
 	}
 	d := deliverFinalPreview(f, r.DeliveryIds[0], 777)
 	if d.Kind != "copy" || d.SourceChat != 1 || d.SourceMessage != 350 || d.View.Kind != "final_preview" || !strings.HasPrefix(d.View.Buttons[0].Data, "preview_final_") {
 		t.Fatal("preview lost forwarded source or used live answer buttons", d)
+	}
+	if d.View.Buttons[0].Label != "Точно буду ✅" || d.View.Buttons[1].Label != "Не смогу 😢" {
+		t.Fatal("preview lost or changed the custom button names", d.View.Buttons)
 	}
 	// Preview callbacks never record a final answer or invite anybody.
 	f.send(1, "", d.View.Buttons[0].Data)
@@ -125,7 +148,7 @@ func TestFinalConfirmationForwardedPreviewAndStart(t *testing.T) {
 	}
 	f.send(1, start, "")
 	var invitations int
-	f.must(f.db.QueryRow(f.ctx, "SELECT count(*) FROM outbound_messages WHERE body->>'kind'='notice' AND body->>'code'='final_invitation' AND kind='copy' AND source_chat=1 AND source_message=777").Scan(&invitations))
+	f.must(f.db.QueryRow(f.ctx, "SELECT count(*) FROM outbound_messages WHERE body->>'kind'='notice' AND body->>'code'='final_invitation' AND kind='copy' AND source_chat=1 AND source_message=777 AND body->'buttons'->0->>'label'=$1 AND body->'buttons'->1->>'label'=$2", "Точно буду ✅", "Не смогу 😢").Scan(&invitations))
 	if invitations != 3 || finalCount(f, "true") != 3 {
 		t.Fatal("campaign did not copy exactly the reviewed invitation")
 	}
@@ -136,14 +159,16 @@ func TestFinalConfirmationReplacedAndCancelledPreview(t *testing.T) {
 	q, positive := seedFinalConfirmation(f, 3)
 	newDraft := fmt.Sprintf("/final_new %d %d", q, positive)
 	f.send(1, newDraft, "")
-	r, _ := f.send(1, "First forwarded message", "")
+	f.send(1, "First forwarded message", "")
+	r, _ := f.send(1, "Первое подтверждение\nПервый отказ", "")
 	var oldID int64
 	f.must(f.db.QueryRow(f.ctx, "SELECT id FROM final_confirmation_drafts WHERE actor=1").Scan(&oldID))
 	// An old preview can be in flight when the operator starts a replacement.
 	f.exec("UPDATE outbound_messages SET status='sent' WHERE chat=1 AND id<$1", r.DeliveryIds[0])
 	old := f.claim(r.DeliveryIds[0])
 	f.send(1, newDraft, "")
-	r, _ = f.send(1, "Replacement forwarded message", "")
+	f.send(1, "Replacement forwarded message", "")
+	r, _ = f.send(1, "Новое подтверждение\nНовый отказ", "")
 	var currentID int64
 	f.must(f.db.QueryRow(f.ctx, "SELECT id FROM final_confirmation_drafts WHERE actor=1").Scan(&currentID))
 	f.complete(old)
@@ -258,6 +283,13 @@ func TestFinalConfirmationCapacityAndDecline(t *testing.T) {
 	f.must(err)
 	if d.Id != 0 {
 		t.Fatal("answered invitation regained its buttons")
+	}
+	var customDeliveries int
+	f.must(f.db.QueryRow(f.ctx, `SELECT count(*) FROM outbound_messages WHERE body->>'kind'='notice'
+AND body->>'code'='final_invitation' AND body->'buttons'->0->>'label'='Да, еду ✅'
+AND body->'buttons'->1->>'label'='Нет, не смогу 😢'`).Scan(&customDeliveries))
+	if customDeliveries != finalCount(f, "true") {
+		t.Fatal("replacement invitations changed the approved button labels")
 	}
 	exported, err := f.svc.Export(f.ctx, &pb.ExportRequest{Actor: 1})
 	f.must(err)

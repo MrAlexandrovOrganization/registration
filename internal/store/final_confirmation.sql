@@ -4,19 +4,22 @@ SELECT pg_advisory_xact_lock(725046904);
 SELECT q.title,o.label FROM survey_questions q JOIN survey_options o ON o.question_id=q.id
 WHERE q.id=$1 AND o.id=$2 AND q.status IN ('open','closed');
 -- name: final_campaign
-SELECT question_id,positive_option_id,draft_id,source_chat,source_message FROM final_confirmation_campaign WHERE id=1;
+SELECT question_id,positive_option_id,draft_id,source_chat,source_message,positive_label,negative_label FROM final_confirmation_campaign WHERE id=1;
 -- name: final_create
-INSERT INTO final_confirmation_campaign(id,question_id,positive_option_id,actor,draft_id,source_chat,source_message)
-VALUES(1,$1,$2,$3,$4,$5,$6);
+INSERT INTO final_confirmation_campaign(id,question_id,positive_option_id,actor,draft_id,source_chat,source_message,positive_label,negative_label)
+VALUES(1,$1,$2,$3,$4,$5,$6,$7,$8);
 -- name: final_draft_new
 INSERT INTO final_confirmation_drafts(actor,question_id,positive_option_id) VALUES($1,$2,$3)
 ON CONFLICT(actor) DO UPDATE SET id=DEFAULT,question_id=$2,positive_option_id=$3,
-source_chat=0,source_message=0,preview_chat=0,preview_message=0;
+source_chat=0,source_message=0,preview_chat=0,preview_message=0,positive_label='',negative_label='';
 -- name: final_draft_get
-SELECT id,question_id,positive_option_id,source_chat,source_message,preview_chat,preview_message
+SELECT id,question_id,positive_option_id,source_chat,source_message,preview_chat,preview_message,positive_label,negative_label
 FROM final_confirmation_drafts WHERE actor=$1;
 -- name: final_draft_capture
-UPDATE final_confirmation_drafts SET id=DEFAULT,source_chat=$2,source_message=$3,preview_chat=0,preview_message=0
+UPDATE final_confirmation_drafts SET id=DEFAULT,source_chat=$2,source_message=$3,preview_chat=0,preview_message=0,positive_label='',negative_label=''
+WHERE actor=$1;
+-- name: final_draft_labels
+UPDATE final_confirmation_drafts SET id=DEFAULT,positive_label=$2,negative_label=$3,preview_chat=0,preview_message=0
 WHERE actor=$1;
 -- name: final_draft_delete
 DELETE FROM final_confirmation_drafts WHERE actor=$1;
