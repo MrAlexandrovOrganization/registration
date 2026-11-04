@@ -6,12 +6,15 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
+	"slices"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/xuri/excelize/v2"
 	pb "registration.local/backend/api"
+	"registration.local/backend/internal/resources"
 	"registration.local/backend/internal/service"
 	"registration.local/backend/internal/sheets"
 	"registration.local/backend/internal/store"
@@ -83,6 +86,63 @@ func TestSheetsMirrorRecoveryAndExportParity(t *testing.T) {
 	check()
 	if len(recorder.table.Rows) != 1 {
 		t.Fatal("deleted participant retained")
+	}
+}
+
+func TestSheetsFinalConfirmationAnswersMatchXLSX(t *testing.T) {
+	f := newSurveyFixture(t, "sheets_final_answers_test")
+	q, positive := seedFinalConfirmation(f, 4)
+	f.send(1, fmt.Sprintf("/final_start %d", prepareFinalConfirmation(f, q, positive)), "")
+	f.send(9999, "", "final:yes")
+	f.send(9998, "", "final:no")
+	f.exec("UPDATE users SET is_staff=1 WHERE telegram_id=9997")
+	f.send(9997, "", "final:yes")
+	f.send(9, "/start", "")
+	recorder := &sheetRecorder{}
+	worker := &sheets.Worker{Service: f.svc, Writer: recorder}
+	written, err := worker.Sync(f.ctx)
+	f.must(err)
+	if !written {
+		t.Fatal("snapshot skipped")
+	}
+	exported, err := f.svc.Export(f.ctx, &pb.ExportRequest{Actor: 1})
+	f.must(err)
+	file, err := excelize.OpenReader(bytes.NewReader(exported.Xlsx))
+	f.must(err)
+	defer file.Close()
+	rows, err := file.GetRows("Sheet1")
+	f.must(err)
+	col := slices.Index(recorder.table.Rows[0], resources.FinalConfirmationHeader)
+	if col < 0 || len(rows) != len(recorder.table.Rows) {
+		t.Fatal("final column or participant rows missing")
+	}
+	want := map[string]string{
+		"9999": "Да, еду ✅",
+		"9998": "Нет, не смогу 😢",
+		"9997": "Исключён из очереди",
+		"9996": "Ожидается ответ",
+		"9":    "",
+	}
+	seen := 0
+	for i, sheetRow := range recorder.table.Rows {
+		for len(rows[i]) < len(sheetRow) {
+			rows[i] = append(rows[i], "")
+		}
+		if !reflect.DeepEqual(rows[i], sheetRow) {
+			t.Fatal("Sheets and XLSX representations differ")
+		}
+		if i == 0 {
+			continue
+		}
+		if answer, ok := want[sheetRow[0]]; ok {
+			seen++
+			if sheetRow[col] != answer {
+				t.Fatalf("participant %s: got %q, want %q", sheetRow[0], sheetRow[col], answer)
+			}
+		}
+	}
+	if seen != len(want) {
+		t.Fatal("answer states missing from export")
 	}
 }
 

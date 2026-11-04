@@ -4,13 +4,19 @@ import "fmt"
 
 const FinalConfirmationHeader = "Финальное подтверждение участия"
 
-func FinalConfirmationAnswer(state string) string {
+func FinalConfirmationAnswer(state, positiveLabel, negativeLabel string) string {
 	switch state {
 	case "invited":
 		return "Ожидается ответ"
 	case "yes":
+		if positiveLabel != "" {
+			return positiveLabel
+		}
 		return "Да"
 	case "no":
+		if negativeLabel != "" {
+			return negativeLabel
+		}
 		return "Нет"
 	case "excluded":
 		return "Исключён из очереди"

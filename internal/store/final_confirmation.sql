@@ -65,4 +65,5 @@ UPDATE outbound_messages o SET status='pending',attempts=0,published_at=NULL,nex
 FROM final_confirmation_invitations i WHERE i.delivery_id=o.id AND i.status='invited'
 AND o.status='failed' AND o.error_code IN ('transient','uncertain','exhausted');
 -- name: final_export
-SELECT telegram_id,status FROM final_confirmation_invitations;
+SELECT i.telegram_id,i.status,COALESCE(c.positive_label,''),COALESCE(c.negative_label,'')
+FROM final_confirmation_invitations i LEFT JOIN final_confirmation_campaign c ON c.id=1;

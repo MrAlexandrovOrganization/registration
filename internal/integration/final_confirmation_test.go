@@ -303,7 +303,7 @@ AND body->'buttons'->1->>'label'='Нет, не смогу 😢'`).Scan(&customDe
 		t.Fatal("final confirmation missing from export")
 	}
 	for _, row := range rows[1:] {
-		if row[0] == "9993" && row[col] != "Нет" || row[0] == "9999" && row[col] != "Да" {
+		if row[0] == "9993" && row[col] != "Нет, не смогу 😢" || row[0] == "9999" && row[col] != "Да, еду ✅" {
 			f.t.Fatal("wrong exported final answer")
 		}
 	}

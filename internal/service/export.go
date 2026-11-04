@@ -34,12 +34,12 @@ func (s *Service) ExportTable(ctx context.Context, tx pgx.Tx) (ExportTable, erro
 	finalAnswers := map[int64]string{}
 	for finalRows.Next() {
 		var actor int64
-		var state string
-		if err = finalRows.Scan(&actor, &state); err != nil {
+		var state, positiveLabel, negativeLabel string
+		if err = finalRows.Scan(&actor, &state, &positiveLabel, &negativeLabel); err != nil {
 			finalRows.Close()
 			return table, err
 		}
-		finalAnswers[actor] = resources.FinalConfirmationAnswer(state)
+		finalAnswers[actor] = resources.FinalConfirmationAnswer(state, positiveLabel, negativeLabel)
 	}
 	err = finalRows.Err()
 	finalRows.Close()
