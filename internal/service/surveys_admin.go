@@ -195,6 +195,9 @@ func (s *Service) surveyAdmin(ctx context.Context, tx pgx.Tx, in *pb.Update, r *
 		if len(parts) != 1 {
 			return reply("survey_usage")
 		}
+		if _, err := tx.Exec(ctx, store.Q("final_draft_delete"), in.Actor); err != nil {
+			return true, err
+		}
 		_, err := tx.Exec(ctx, store.Q("survey_draft_start"), in.Actor)
 		if err != nil {
 			return true, err

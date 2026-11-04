@@ -49,6 +49,7 @@ func TestFirstStarts(t *testing.T) {
 	}
 	must(store.Migrate(ctx, db))
 	// Reconstruct version 1 and verify the real upgrade preserves historical users.
+	dropFinalConfirmationSchema(t, db)
 	exec("ALTER TABLE outbound_messages DROP COLUMN update_bot_id CASCADE, DROP COLUMN update_id CASCADE, DROP COLUMN edit_message_id CASCADE")
 	exec("DROP INDEX outbound_interactive_due")
 	exec("DROP VIEW survey_participants; DROP TABLE survey_answers, survey_options, survey_questions, survey_drafts")
@@ -250,7 +251,7 @@ func TestFirstStarts(t *testing.T) {
 		defer file.Close()
 		rows, err := file.GetRows("Sheet1")
 		must(err)
-		if len(rows[0]) != sourceColumn+3 || rows[0][sourceColumn] != "first_start_source" || rows[0][sourceColumn+1] != "has_registered" || rows[0][sourceColumn+2] != "first_start_at_utc" {
+		if len(rows[0]) != sourceColumn+4 || rows[0][sourceColumn] != "first_start_source" || rows[0][sourceColumn+1] != "has_registered" || rows[0][sourceColumn+2] != "first_start_at_utc" {
 			t.Fatal("wrong export headers")
 		}
 		wantStarts := map[string]string{

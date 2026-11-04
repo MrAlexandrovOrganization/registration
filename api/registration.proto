@@ -37,7 +37,8 @@ message Update {
   bool callback_message_editable = 16;
   // Telegram file_id, never a download URL. Only used by the question wizard.
   string photo_file_id = 17;
-  // Accessible bot-owned private photo callback, suitable for markup removal.
+  // Accessible bot-owned private media callback, suitable for markup removal.
+  // The historical photo name also covers copied video/document messages.
   bool callback_photo_editable = 18;
   string photo_caption = 19;
 }

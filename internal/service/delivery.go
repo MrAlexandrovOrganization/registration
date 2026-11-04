@@ -58,6 +58,12 @@ func (s *Service) Claim(ctx context.Context, r *pb.ClaimRequest) (*pb.Delivery, 
 			if err != nil {
 				return nil, internal(err)
 			}
+			if deliverable {
+				deliverable, err = refreshFinalDelivery(ctx, tx, d)
+				if err != nil {
+					return nil, internal(err)
+				}
+			}
 			allowed := false
 			if deliverable {
 				allowed, err = s.deliveryAllowed(ctx, tx, d)
@@ -203,6 +209,20 @@ func (s *Service) Complete(ctx context.Context, r *pb.Completion) (*pb.Receipt, 
 	if _, err = tx.Exec(ctx, store.Q("complete"), r.Id, r.Lease, state, increment, float64(delay), r.TelegramMessageId, code); err != nil {
 		return nil, internal(err)
 	}
+	if kind == "copy" && r.Outcome == "sent" {
+		view := &pb.View{}
+		if err = protojson.Unmarshal(body, view); err != nil {
+			return nil, internal(err)
+		}
+		if view.Kind == "final_preview" {
+			if r.TelegramMessageId <= 0 || len(view.Numbers) != 1 {
+				return nil, status.Error(codes.InvalidArgument, "missing final preview message id")
+			}
+			if _, err = tx.Exec(ctx, store.Q("final_preview_delivered"), actor, view.Numbers[0], chat, r.TelegramMessageId); err != nil {
+				return nil, internal(err)
+			}
+		}
+	}
 	if kind == "registration_completed" && r.Outcome == "sent" {
 		// Atomic with completion: recovery retries only pinChatMessage, never
 		// resends a reminder whose Telegram message ID has been persisted.
@@ -221,6 +241,9 @@ func (s *Service) Complete(ctx context.Context, r *pb.Completion) (*pb.Receipt, 
 			return nil, internal(err)
 		}
 		if _, err = tx.Exec(ctx, store.Q("block_pending"), chat); err != nil {
+			return nil, internal(err)
+		}
+		if err = fillFinalConfirmations(ctx, tx); err != nil {
 			return nil, internal(err)
 		}
 	}

@@ -174,6 +174,9 @@ func (s *Service) surveyCallback(ctx context.Context, tx pgx.Tx, in *pb.Update, 
 			return true, err
 		}
 	}
+	if err = fillFinalConfirmations(ctx, tx); err != nil {
+		return true, err
+	}
 	sends := *r
 	sends.sendOnly = true
 	return true, sends.enqueue(ctx, tx, in.Chat, false, "view", s.view(*u), in.Actor, 0, 0)

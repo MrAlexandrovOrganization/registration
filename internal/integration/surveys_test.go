@@ -603,6 +603,7 @@ func TestSurveyPhotoBeforeTitle(t *testing.T) {
 func TestSurveyUpgradeFromDeployedV5(t *testing.T) {
 	f := newSurveyFixture(t, "survey_upgrade_v5_test")
 	// Reconstruct the deployed schema without touching any existing v1-v5 object.
+	dropFinalConfirmationSchema(t, f.db)
 	f.exec("DROP VIEW survey_participants; DROP TABLE survey_answers,survey_options,survey_questions,survey_drafts; DELETE FROM schema_migrations WHERE version>=6")
 	if store.CheckSchema(f.ctx, f.db) == nil {
 		t.Fatal("v5 must require the new migration")
@@ -616,7 +617,7 @@ func TestSurveyUpgradeFromDeployedV5(t *testing.T) {
 		t.Helper()
 		var value string
 		f.must(f.db.QueryRow(f.ctx, `SELECT jsonb_build_object(
-   'users',(SELECT jsonb_agg(to_jsonb(u) ORDER BY telegram_id) FROM users u),
+   'users',(SELECT jsonb_agg(to_jsonb(u)-'registration_completed_at' ORDER BY telegram_id) FROM users u),
    'permissions',(SELECT jsonb_agg(to_jsonb(p) ORDER BY id) FROM user_permissions p),
    'chats',(SELECT jsonb_agg(to_jsonb(c) ORDER BY id) FROM bot_chats c),
    'sources',(SELECT jsonb_agg(to_jsonb(s) ORDER BY telegram_id) FROM first_starts s),
@@ -637,7 +638,7 @@ func TestSurveyUpgradeFromDeployedV5(t *testing.T) {
 	}
 	var version, history int
 	f.must(f.db.QueryRow(f.ctx, "SELECT max(version),count(*) FROM schema_migrations").Scan(&version, &history))
-	if version != 7 || history != 7 {
+	if version != 8 || history != 8 {
 		t.Fatal("expected complete migration history", version, history)
 	}
 	q := f.create("Photo in one migration", true)
@@ -792,6 +793,7 @@ func TestSurveyUpgradeFromDeployedV6(t *testing.T) {
 	f.send(1, "Body", "")
 	_, mode := f.send(1, "A\nB", "")
 	// Reconstruct schema 006 in this disposable fixture, leaving its feature data intact.
+	dropFinalConfirmationSchema(t, f.db)
 	f.exec("ALTER TABLE survey_questions DROP COLUMN audience; ALTER TABLE survey_drafts DROP COLUMN in_registration; ALTER TABLE survey_drafts DROP CONSTRAINT survey_drafts_stage_check; ALTER TABLE survey_drafts ADD CONSTRAINT survey_drafts_stage_check CHECK(stage IN ('title','body','options','mode')); DELETE FROM schema_migrations WHERE version=7")
 	var before string
 	const history = "SELECT jsonb_agg(to_jsonb(m) ORDER BY version)::text FROM schema_migrations m WHERE version<=6"
@@ -847,9 +849,9 @@ func TestSurveyExportReadableAnswers(t *testing.T) {
 		f.must(err)
 		rows, err := file.GetRows("Sheet1")
 		f.must(err)
-		start := 14
+		start := 15
 		if participation {
-			start = 16
+			start = 17
 		}
 		if len(rows[0]) != start+2 || rows[0][start] != fmt.Sprintf("Ответ на вопрос «Участие» (№%d)", first) || rows[0][start+1] != fmt.Sprintf("Ответ на вопрос «Участие» (№%d)", second) {
 			t.Fatal("questions missing, ambiguous, misplaced, or include a draft", rows[0])

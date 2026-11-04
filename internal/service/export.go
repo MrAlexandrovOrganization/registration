@@ -27,6 +27,25 @@ func (s *Service) ExportTable(ctx context.Context, tx pgx.Tx) (ExportTable, erro
 	if err != nil {
 		return table, err
 	}
+	finalRows, err := tx.Query(ctx, store.Q("final_export"))
+	if err != nil {
+		return table, err
+	}
+	finalAnswers := map[int64]string{}
+	for finalRows.Next() {
+		var actor int64
+		var state string
+		if err = finalRows.Scan(&actor, &state); err != nil {
+			finalRows.Close()
+			return table, err
+		}
+		finalAnswers[actor] = resources.FinalConfirmationAnswer(state)
+	}
+	err = finalRows.Err()
+	finalRows.Close()
+	if err != nil {
+		return table, err
+	}
 	headers := []string{"telegram_id", "username", "telegram_sername", "name", "birth_date", "group", "phone", "expectations", "will_drive", "trip_attendance", "is_staff", "is_counselor", "is_blocked", "first_start_source", "has_registered", "first_start_at_utc"}
 	header := []string{}
 	for i, h := range headers {
@@ -45,6 +64,8 @@ func (s *Service) ExportTable(ctx context.Context, tx pgx.Tx) (ExportTable, erro
 		}
 		table.Widths = append(table.Widths, width)
 	}
+	header = append(header, resources.FinalConfirmationHeader)
+	table.Widths = append(table.Widths, 36)
 	table.SurveyStart = len(header)
 	for _, q := range columns {
 		header = append(header, resources.SurveyAnswerHeader(q.title, q.id))
@@ -81,6 +102,7 @@ func (s *Service) ExportTable(ctx context.Context, tx pgx.Tx) (ExportTable, erro
 			row = append(row, text)
 		}
 		actor := values[0].(int64)
+		row = append(row, finalAnswers[actor])
 		for _, q := range columns {
 			row = append(row, answers[actor][q.id])
 		}

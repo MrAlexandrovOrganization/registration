@@ -59,6 +59,8 @@ func (s *Service) admin(ctx context.Context, tx pgx.Tx, in *pb.Update, u *user, 
 	}
 	allowed := func(p string) bool { return s.allowed(ctx, tx, in.Actor, p) }
 	switch cmd {
+	case "/final_new", "/final_preview", "/final_start", "/final_status", "/final_retry":
+		return s.finalAdmin(ctx, tx, in, u, replies, parts)
 	case "/question_new", "/question_preview", "/question_publish", "/question_close", "/question_results", "/questions":
 		return s.surveyAdmin(ctx, tx, in, replies, parts)
 	case "/help":
@@ -234,6 +236,9 @@ func (s *Service) admin(ctx context.Context, tx pgx.Tx, in *pb.Update, u *user, 
 		}
 		if !s.ParticipationEnabled && (parts[1] == "yes" || parts[1] == "maybe") {
 			return notice("invalid_status")
+		}
+		if _, err := tx.Exec(ctx, store.Q("final_draft_delete"), in.Actor); err != nil {
+			return true, err
 		}
 		u.state = "broadcast_" + parts[1]
 		if err := saveUser(ctx, tx, in.Actor, u); err != nil {
@@ -440,6 +445,9 @@ func (s *Service) SyncMember(ctx context.Context, r *pb.SyncMemberRequest) (*pb.
 		return nil, status.Error(codes.PermissionDenied, "permission denied")
 	}
 	if err = s.member(ctx, tx, &pb.Update{Chat: r.Chat, MemberId: r.User, MemberActive: r.Active}); err != nil {
+		return nil, internal(err)
+	}
+	if err = fillFinalConfirmations(ctx, tx); err != nil {
 		return nil, internal(err)
 	}
 	if err = tx.Commit(ctx); err != nil {

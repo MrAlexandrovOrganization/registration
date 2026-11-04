@@ -208,6 +208,11 @@ func (s *Service) Accept(ctx context.Context, u *pb.Update) (*pb.Receipt, error)
 	if err != nil {
 		return nil, internal(err)
 	}
+	if contentValid && (u.Kind == "blocked" || u.Kind == "member") {
+		if err = fillFinalConfirmations(ctx, tx); err != nil {
+			return nil, internal(err)
+		}
+	}
 	ids, err := updateReplies(ctx, tx, s.BotID, u.Id)
 	if err != nil {
 		return nil, internal(err)
@@ -323,6 +328,12 @@ func (s *Service) private(ctx context.Context, tx pgx.Tx, in *pb.Update, replies
 		if handled || err != nil {
 			return err
 		}
+	}
+	if handled, err := s.finalCallback(ctx, tx, in, replies); handled || err != nil {
+		return err
+	}
+	if handled, err := s.finalDraftMessage(ctx, tx, in, replies); handled || err != nil {
+		return err
 	}
 	if handled, err := s.surveyDraft(ctx, tx, in, replies); handled || err != nil {
 		return err
@@ -486,6 +497,9 @@ func (s *Service) private(ctx context.Context, tx pgx.Tx, in *pb.Update, replies
 	}
 	if u.state == "confirm" || u.state == "registered" {
 		if err = s.registrationMilestones(ctx, tx); err != nil {
+			return err
+		}
+		if err = fillFinalConfirmations(ctx, tx); err != nil {
 			return err
 		}
 	}

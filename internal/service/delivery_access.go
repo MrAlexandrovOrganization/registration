@@ -13,6 +13,10 @@ func (s *Service) deliveryAllowed(ctx context.Context, tx pgx.Tx, d *pb.Delivery
 	permission := ""
 	private := false
 	switch d.Kind {
+	case "copy":
+		if d.View.GetKind() == "final_preview" {
+			permission, private = "message_sender", true
+		}
 	case "export":
 		permission, private = "table_viewer", true
 	case "sync":
@@ -27,6 +31,10 @@ func (s *Service) deliveryAllowed(ctx context.Context, tx pgx.Tx, d *pb.Delivery
 			permission = "table_viewer"
 		case "survey_results", "survey_people":
 			permission, private = "table_viewer", true
+		case "final_status":
+			permission, private = "table_viewer", true
+		case "final_manage", "final_preview":
+			permission, private = "message_sender", true
 		case "survey_notice":
 			permission, private = "operator", true
 		case "survey_manage", "survey_preview":

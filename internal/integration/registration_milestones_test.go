@@ -61,6 +61,7 @@ func TestRegistrationMilestones(t *testing.T) {
 			VALUES(10163,10163,'interactive','view','{"kind":"confirm"}','sent');
 		INSERT INTO outbound_messages(chat,priority,kind,body) VALUES(-400,'interactive','view','{"kind":"milestone","numbers":[25]}');`)
 	must(err)
+	dropFinalConfirmationSchema(t, db)
 	_, err = db.Exec(ctx, "DROP VIEW survey_participants; DROP TABLE survey_answers, survey_options, survey_questions, survey_drafts; DROP TABLE registration_milestone_notifications; ALTER TABLE users DROP COLUMN has_registered, DROP COLUMN staff_membership_checked, DROP COLUMN counselor_membership_checked; ALTER TABLE bot_chats DROP COLUMN milestone_ready; DELETE FROM schema_migrations WHERE version>=5")
 	must(err)
 	must(store.Migrate(ctx, db))
