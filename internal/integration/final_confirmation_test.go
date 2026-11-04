@@ -26,6 +26,7 @@ func dropFinalConfirmationSchema(t *testing.T, db *pgxpool.Pool) {
 	_, err := db.Exec(t.Context(), `DROP VIEW final_confirmation_eligible;
 DROP TABLE final_confirmation_invitations,final_confirmation_campaign,final_confirmation_drafts;
 ALTER TABLE users DROP COLUMN registration_completed_at;
+ALTER TABLE survey_questions DROP COLUMN admission_closed_at;
 DELETE FROM schema_migrations WHERE version>=8`)
 	if err != nil {
 		t.Fatal(err)

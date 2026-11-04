@@ -26,6 +26,7 @@ type surveyQuestion struct {
 	audience             string
 	photo                string
 	registration         bool
+	admissionClosed      bool
 	options              []surveyOption
 	answer               int64
 }
@@ -45,7 +46,7 @@ func readSurveys(ctx context.Context, tx pgx.Tx, actor int64, allDrafts bool) ([
 	for rows.Next() {
 		var q surveyQuestion
 		var o surveyOption
-		if err = rows.Scan(&q.id, &q.actor, &q.title, &q.body, &q.photo, &q.registration, &q.status, &q.broadcast, &q.audience, &o.id, &o.label, &q.answer); err != nil {
+		if err = rows.Scan(&q.id, &q.actor, &q.title, &q.body, &q.photo, &q.registration, &q.admissionClosed, &q.status, &q.broadcast, &q.audience, &o.id, &o.label, &q.answer); err != nil {
 			return nil, err
 		}
 		if len(result) == 0 || result[len(result)-1].id != q.id {
@@ -179,17 +180,29 @@ func (s *Service) surveyCallback(ctx context.Context, tx pgx.Tx, in *pb.Update, 
 	}
 	sends := *r
 	sends.sendOnly = true
+	var latePositive bool
+	if err = tx.QueryRow(ctx, store.Q("final_late_positive"), q.id, option).Scan(&latePositive); err != nil {
+		return true, err
+	}
+	if latePositive {
+		if err = sends.enqueue(ctx, tx, in.Chat, false, "view", &pb.View{Kind: "notice", Code: "agreement_capacity_full"}, in.Actor, 0, 0); err != nil {
+			return true, err
+		}
+		if u.state == "registered" || u.state == "confirm" {
+			return true, nil
+		}
+	}
 	return true, sends.enqueue(ctx, tx, in.Chat, false, "view", s.view(*u), in.Actor, 0, 0)
 }
 
-func (s *Service) surveyFormAnswer(ctx context.Context, tx pgx.Tx, in *pb.Update, u *user, action string) (bool, error) {
+func (s *Service) surveyFormAnswer(ctx context.Context, tx pgx.Tx, in *pb.Update, u *user, action string, r *replies) (bool, error) {
 	if !strings.HasPrefix(u.state, "survey_") {
 		return false, nil
 	}
 	field := u.state
 	id, err := strconv.ParseInt(strings.TrimPrefix(field, "survey_"), 10, 64)
 	q, ok := findSurvey(u.surveys, id)
-	if err != nil || !ok || q.status != "open" || !q.registration {
+	if err != nil || !ok || q.status != "open" || (!q.registration && !q.admissionClosed) {
 		u.state = s.nextUser(*u)
 		return true, nil
 	}
@@ -209,6 +222,11 @@ func (s *Service) surveyFormAnswer(ctx context.Context, tx pgx.Tx, in *pb.Update
 	}
 	if !valid {
 		return true, nil
+	}
+	if q.admissionClosed {
+		if err = r.removeKeyboard(ctx, tx, in.Chat, false, in.Actor); err != nil {
+			return true, err
+		}
 	}
 	if _, err = tx.Exec(ctx, store.Q("survey_answer"), id, in.Actor, option); err != nil {
 		return true, err
@@ -252,7 +270,7 @@ func refreshSurveyDelivery(ctx context.Context, tx pgx.Tx, d *pb.Delivery) (bool
 	if !ok {
 		return false, fmt.Errorf("missing survey question")
 	}
-	if q.status != "open" || q.answer != 0 {
+	if q.status != "open" || q.answer != 0 || (q.admissionClosed && d.View.Kind == "survey_broadcast") {
 		return false, nil
 	}
 	if d.View.Kind == "survey_broadcast" {

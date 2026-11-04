@@ -17,7 +17,7 @@ INSERT INTO survey_questions(actor,title,body,in_registration,photo_file_id,audi
 -- name: survey_option_create
 INSERT INTO survey_options(question_id,position,label) VALUES($1,$2,$3);
 -- name: survey_load
-SELECT q.id,q.actor,q.title,q.body,q.photo_file_id,q.in_registration,q.status,COALESCE(q.broadcast_id,0),q.audience,
+SELECT q.id,q.actor,q.title,q.body,q.photo_file_id,q.in_registration,q.admission_closed_at IS NOT NULL,q.status,COALESCE(q.broadcast_id,0),q.audience,
  o.id,o.label,COALESCE(a.option_id,0)
 FROM survey_questions q JOIN survey_options o ON o.question_id=q.id
 LEFT JOIN survey_answers a ON a.question_id=q.id AND a.telegram_id=$1
@@ -31,7 +31,7 @@ UPDATE survey_questions SET status='closed' WHERE id=$1 AND status='open';
 -- name: survey_target
 SELECT EXISTS(SELECT 1 FROM outbound_messages WHERE broadcast_id=$1 AND chat=$2);
 -- name: survey_answer
-INSERT INTO survey_answers(question_id,telegram_id,option_id) VALUES($1,$2,$3)
+INSERT INTO survey_answers(question_id,telegram_id,option_id,answered_at,updated_at) VALUES($1,$2,$3,clock_timestamp(),clock_timestamp())
 ON CONFLICT(question_id,telegram_id) DO NOTHING;
 -- name: survey_counts
 SELECT o.label,count(a.telegram_id) FROM survey_options o

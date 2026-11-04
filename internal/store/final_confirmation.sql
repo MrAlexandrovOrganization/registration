@@ -67,3 +67,17 @@ AND o.status='failed' AND o.error_code IN ('transient','uncertain','exhausted');
 -- name: final_export
 SELECT i.telegram_id,i.status,COALESCE(c.positive_label,''),COALESCE(c.negative_label,'')
 FROM final_confirmation_invitations i LEFT JOIN final_confirmation_campaign c ON c.id=1;
+-- name: final_admission_state
+SELECT q.admission_closed_at FROM survey_questions q JOIN final_confirmation_campaign c ON c.question_id=q.id
+WHERE q.id=$1;
+-- name: final_admission_close
+UPDATE survey_questions q SET in_registration=false,admission_closed_at=COALESCE(q.admission_closed_at,clock_timestamp())
+FROM final_confirmation_campaign c WHERE c.question_id=q.id AND q.id=$1
+RETURNING q.admission_closed_at;
+-- name: final_admission_reserve
+SELECT count(*) FROM final_confirmation_eligible e JOIN final_confirmation_campaign c
+ON c.question_id=e.question_id AND c.positive_option_id=e.option_id
+WHERE NOT EXISTS(SELECT 1 FROM final_confirmation_invitations i WHERE i.telegram_id=e.telegram_id);
+-- name: final_late_positive
+SELECT EXISTS(SELECT 1 FROM survey_questions q JOIN final_confirmation_campaign c ON c.question_id=q.id
+WHERE q.id=$1 AND c.positive_option_id=$2 AND q.admission_closed_at IS NOT NULL);

@@ -11,7 +11,7 @@ SELECT COALESCE(source,':unknown'),count(*) FROM first_starts GROUP BY source OR
 -- name: user
 SELECT state,version,COALESCE(name,''),COALESCE(birth_date,''),COALESCE("group",''),COALESCE(phone,''),COALESCE(expectations,''),COALESCE(will_drive,''),COALESCE(trip_attendance,'') FROM users WHERE telegram_id=$1 FOR UPDATE;
 -- name: save_user
-UPDATE users SET state=$2,has_registered=has_registered OR $2 IN ('confirm','registered'),registration_completed_at=COALESCE(registration_completed_at,CASE WHEN NOT has_registered AND $2 IN ('confirm','registered') THEN now() END),version=version+1,name=NULLIF($3,''),birth_date=NULLIF($4,''),"group"=NULLIF($5,''),phone=NULLIF($6,''),expectations=NULLIF($7,''),will_drive=NULLIF($8,''),trip_attendance=NULLIF($9,''),updated_at=now() WHERE telegram_id=$1 RETURNING version;
+UPDATE users SET state=$2,has_registered=has_registered OR $2 IN ('confirm','registered'),registration_completed_at=COALESCE(registration_completed_at,CASE WHEN NOT has_registered AND $2 IN ('confirm','registered') THEN clock_timestamp() END),version=version+1,name=NULLIF($3,''),birth_date=NULLIF($4,''),"group"=NULLIF($5,''),phone=NULLIF($6,''),expectations=NULLIF($7,''),will_drive=NULLIF($8,''),trip_attendance=NULLIF($9,''),updated_at=now() WHERE telegram_id=$1 RETURNING version;
 -- name: allowed
 SELECT EXISTS(SELECT 1 FROM user_permissions WHERE telegram_id=$1 AND permission=$2);
 -- name: enqueue

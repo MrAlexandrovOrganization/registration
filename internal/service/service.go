@@ -450,7 +450,7 @@ func (s *Service) private(ctx context.Context, tx pgx.Tx, in *pb.Update, replies
 	case u.state == "registered" || u.state == "confirm" || u.state == "edit":
 		return reply(s.view(u))
 	default:
-		if handled, err := s.surveyFormAnswer(ctx, tx, in, &u, action); handled || err != nil {
+		if handled, err := s.surveyFormAnswer(ctx, tx, in, &u, action, replies); handled || err != nil {
 			if err != nil {
 				return err
 			}

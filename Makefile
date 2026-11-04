@@ -58,6 +58,9 @@ import-dry-run: proto-gen
 	go run ./cmd/registration import-sqlite --source "$(SOURCE)" --dry-run
 validate-data: proto-gen
 	go run ./cmd/registration validate-data
+.PHONY: close-admission
+close-admission: proto-gen
+	go run ./cmd/registration close-admission --question "$(QUESTION_ID)"
 compose-build:
 	$(DOCKER_COMPOSE) build backend
 up: active-check

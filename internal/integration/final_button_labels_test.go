@@ -13,11 +13,12 @@ func TestFinalButtonLabelsUpgradeFromV8(t *testing.T) {
 	q, positive := seedFinalConfirmation(f, 3)
 	// Reconstruct the deployed v8 objects. Existing queued messages retain the
 	// old resource-key buttons, including their delivery and answer statuses.
+	dropAdmissionSchema(f)
 	f.exec(`ALTER TABLE final_confirmation_campaign DROP CONSTRAINT final_campaign_labels,
 DROP COLUMN positive_label,DROP COLUMN negative_label;
 ALTER TABLE final_confirmation_drafts DROP CONSTRAINT final_draft_labels,
 DROP COLUMN positive_label,DROP COLUMN negative_label;
-DELETE FROM schema_migrations WHERE version=9`)
+DELETE FROM schema_migrations WHERE version>=9`)
 	f.seeded(2, "new")
 	f.seeded(3, "new")
 	var draft, job int64

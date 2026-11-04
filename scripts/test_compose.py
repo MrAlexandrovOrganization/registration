@@ -11,6 +11,8 @@ import uuid
 from pathlib import Path
 
 root = Path(__file__).resolve().parent.parent
+migrations = sorted((root / "internal/store/migrations").glob("*.sql"))
+latest_schema = str(int(migrations[-1].name.split("_")[0]))
 name = "registration-fixture-" + uuid.uuid4().hex[:10]
 # Never inherit Compose selectors or application credentials; never load .env.
 env = {key: value for key, value in os.environ.items() if not key.startswith("COMPOSE_")}
@@ -109,7 +111,7 @@ with tempfile.TemporaryDirectory(prefix=name) as directory:
             raise AssertionError(result.stdout + result.stderr)
         if success:
             assert backend_state() == "running"
-            assert sql("SELECT max(version) FROM schema_migrations") == "9"
+            assert sql("SELECT max(version) FROM schema_migrations") == latest_schema
         else:
             assert backend_state() in ("exited", "absent"), "backend started after failed migration"
 
@@ -120,7 +122,7 @@ with tempfile.TemporaryDirectory(prefix=name) as directory:
         sql(
             "CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, checksum TEXT NOT NULL, applied_at TIMESTAMPTZ NOT NULL DEFAULT now());"
         )
-        for path in sorted((root / "internal/store/migrations").glob("*.sql"))[:3]:
+        for path in migrations[:3]:
             data = path.read_bytes()
             checksum = hashlib.sha256(data).hexdigest()
             version = int(path.name.split("_")[0])
@@ -237,7 +239,7 @@ with tempfile.TemporaryDirectory(prefix=name) as directory:
             assert locker.wait(timeout=30) == 0
             for process in processes:
                 assert process.wait(timeout=60) == 0
-            assert sql("SELECT count(*) FROM schema_migrations") == "9"
+            assert sql("SELECT count(*) FROM schema_migrations") == str(len(migrations))
             assert sql("SELECT name FROM users WHERE telegram_id=123") == "Synthetic participant"
         finally:
             for process in [locker, *processes]:

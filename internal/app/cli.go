@@ -16,7 +16,7 @@ import (
 
 func Run(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: registration serve|migrate|import-sqlite|validate-data")
+		return errors.New("usage: registration serve|migrate|import-sqlite|validate-data|close-admission")
 	}
 	if args[0] == "init-topics" {
 		return InitTopics(ctx)
@@ -30,6 +30,9 @@ func Run(ctx context.Context, args []string) error {
 	}
 	bounded, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
+	if args[0] == "close-admission" {
+		return closeAdmission(bounded, args[1:])
+	}
 	if args[0] == "import-sqlite" {
 		fs := flag.NewFlagSet("import-sqlite", flag.ContinueOnError)
 		source := fs.String("source", "", "standalone SQLite snapshot")
