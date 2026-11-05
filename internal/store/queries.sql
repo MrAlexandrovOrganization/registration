@@ -87,24 +87,16 @@ SELECT count(*),count(*) FILTER(WHERE state='registered'),count(*) FILTER(WHERE 
 -- name: broadcast_create
 INSERT INTO broadcasts(actor,audience,kind,source_chat,source_message) VALUES($1,$2,$3,$4,$5) RETURNING id;
 -- name: audience_count
-SELECT count(*) FROM users u WHERE is_blocked=0 AND ($1='all' OR ($1='registered' AND state='registered') OR ($1='incomplete' AND state<>'registered') OR ($1='yes' AND will_drive='Обязательно! 🤩') OR ($1='maybe' AND will_drive='Пока думаю 🤔') OR ($1='staff' AND is_staff=1) OR ($1='counselor' AND is_counselor=1) OR ($1='non_counselor' AND is_counselor=0)
-OR ($1='final_pending' AND EXISTS(
- SELECT 1 FROM final_confirmation_invitations i
- JOIN outbound_messages original ON original.id=i.delivery_id
- JOIN final_confirmation_invitation_eligible e ON e.telegram_id=i.telegram_id
- WHERE i.telegram_id=u.telegram_id AND i.status='invited' AND original.status='sent' AND original.telegram_message_id>0
-)));
+SELECT count(*) FROM users u WHERE is_blocked=0 AND ($1='all' OR ($1='registered' AND state='registered') OR ($1='incomplete' AND state<>'registered') OR ($1='yes' AND will_drive='Обязательно! 🤩') OR ($1='maybe' AND will_drive='Пока думаю 🤔') OR ($1='staff' AND is_staff=1) OR ($1='counselor' AND is_counselor=1) OR ($1='non_counselor' AND is_counselor=0));
 -- name: broadcast_get
 SELECT actor,audience,kind,source_chat,source_message,status FROM broadcasts WHERE id=$1 FOR UPDATE;
 -- name: broadcast_start
 INSERT INTO outbound_messages(chat,priority,kind,body,actor,source_chat,source_message,broadcast_id,traceparent)
-SELECT telegram_id,'broadcast',$3,$4,$5,$6,$7,$1,$8 FROM users u WHERE is_blocked=0 AND ($2='all' OR ($2='registered' AND state='registered') OR ($2='incomplete' AND state<>'registered') OR ($2='yes' AND will_drive='Обязательно! 🤩') OR ($2='maybe' AND will_drive='Пока думаю 🤔') OR ($2='staff' AND is_staff=1) OR ($2='counselor' AND is_counselor=1) OR ($2='non_counselor' AND is_counselor=0)
-OR ($2='final_pending' AND EXISTS(
- SELECT 1 FROM final_confirmation_invitations i
- JOIN outbound_messages original ON original.id=i.delivery_id
- JOIN final_confirmation_invitation_eligible e ON e.telegram_id=i.telegram_id
- WHERE i.telegram_id=u.telegram_id AND i.status='invited' AND original.status='sent' AND original.telegram_message_id>0
-))) ON CONFLICT DO NOTHING;
+SELECT telegram_id,'broadcast',$3,$4,$5,$6,$7,$1,$8 FROM users u WHERE is_blocked=0 AND ($2='all' OR ($2='registered' AND state='registered') OR ($2='incomplete' AND state<>'registered') OR ($2='yes' AND will_drive='Обязательно! 🤩') OR ($2='maybe' AND will_drive='Пока думаю 🤔') OR ($2='staff' AND is_staff=1) OR ($2='counselor' AND is_counselor=1) OR ($2='non_counselor' AND is_counselor=0)) ON CONFLICT DO NOTHING;
+-- name: broadcast_start_selected
+INSERT INTO outbound_messages(chat,priority,kind,body,actor,source_chat,source_message,broadcast_id,traceparent)
+SELECT chat,'broadcast',$2,$3,$4,$5,$6,$1,$7 FROM unnest($8::bigint[]) AS recipients(chat)
+ON CONFLICT DO NOTHING;
 -- name: broadcast_status
 UPDATE broadcasts SET status=$2 WHERE id=$1;
 -- name: broadcast_cancel
@@ -122,7 +114,8 @@ UPDATE outbound_messages o SET status='sending',lease=$2,lease_until=now()+inter
 WHERE o.id=$1 AND o.status IN ('pending','retry_wait','sending') AND (o.status<>'sending' OR o.lease_until<now()) AND o.next_attempt_at<=now()
 AND (o.broadcast_id IS NULL OR EXISTS(SELECT 1 FROM broadcasts b WHERE b.id=o.broadcast_id AND b.status='running'))
 AND NOT EXISTS(SELECT 1 FROM outbound_messages prev WHERE prev.chat=o.chat AND prev.id<o.id AND prev.priority=o.priority AND prev.status IN ('pending','retry_wait','sending') AND (prev.broadcast_id IS NULL OR EXISTS(SELECT 1 FROM broadcasts b WHERE b.id=prev.broadcast_id AND b.status='running')))
-RETURNING o.chat,o.kind,o.body,o.source_chat,o.source_message,o.actor,o.traceparent,o.is_group,o.edit_message_id;
+RETURNING o.chat,o.kind,o.body,o.source_chat,o.source_message,o.actor,o.traceparent,o.is_group,o.edit_message_id,
+ COALESCE((SELECT b.audience FROM broadcasts b WHERE b.id=o.broadcast_id),'');
 -- name: sender_lock
 UPDATE runtime_state SET sender_worker=$1,sender_until=now()+interval '90 seconds' WHERE id=1 AND (sender_until<now() OR sender_worker=$1) RETURNING GREATEST(0,ceil(EXTRACT(EPOCH FROM cooldown_until-clock_timestamp())*1000))::bigint;
 

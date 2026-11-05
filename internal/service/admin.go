@@ -22,7 +22,7 @@ func audienceValid(v string) bool {
 	return false
 }
 func broadcastAudienceValid(v string) bool {
-	return v == "final_pending" || audienceValid(v)
+	return specialBroadcastAudience(v) || audienceValid(v)
 }
 
 func permissionValid(v string) bool {
@@ -242,6 +242,10 @@ func (s *Service) admin(ctx context.Context, tx pgx.Tx, in *pb.Update, u *user, 
 		if len(parts) != 2 || !broadcastAudienceValid(parts[1]) {
 			return notice("command_usage")
 		}
+		preset := closureBroadcastCode(parts[1]) != ""
+		if preset && in.ChatType != "private" {
+			return notice("denied")
+		}
 		if !s.ParticipationEnabled && (parts[1] == "yes" || parts[1] == "maybe") {
 			return notice("invalid_status")
 		}
@@ -249,8 +253,14 @@ func (s *Service) admin(ctx context.Context, tx pgx.Tx, in *pb.Update, u *user, 
 			return true, err
 		}
 		u.state = "broadcast_" + parts[1]
+		if preset {
+			u.state = s.nextUser(*u)
+		}
 		if err := saveUser(ctx, tx, in.Actor, u); err != nil {
 			return true, err
+		}
+		if preset {
+			return true, prepareClosureBroadcast(ctx, tx, in, replies, parts[1])
 		}
 		return notice("send_source")
 	case "/poll":
@@ -306,13 +316,30 @@ func (s *Service) admin(ctx context.Context, tx pgx.Tx, in *pb.Update, u *user, 
 				return notice("invalid_status")
 			}
 			body := []byte("{}")
+			deliveryKind := kind
 			if kind == "view" {
 				body, err = protojson.Marshal(s.pollView())
-				if err != nil {
-					return true, err
+			} else if kind == "closure" {
+				code := closureBroadcastCode(audience)
+				if code == "" {
+					return notice("invalid_status")
 				}
+				deliveryKind = "view"
+				body, err = protojson.Marshal(&pb.View{Kind: "notice", Code: code})
 			}
-			if _, err = tx.Exec(ctx, store.Q("broadcast_start"), id, audience, kind, body, actor, sourceChat, sourceMessage, carrier(ctx)); err != nil {
+			if err != nil {
+				return true, err
+			}
+			if specialBroadcastAudience(audience) {
+				ids, selectErr := specialBroadcastRecipients(ctx, tx, audience, 0)
+				if selectErr != nil {
+					return true, selectErr
+				}
+				_, err = tx.Exec(ctx, store.Q("broadcast_start_selected"), id, deliveryKind, body, actor, sourceChat, sourceMessage, carrier(ctx), ids)
+			} else {
+				_, err = tx.Exec(ctx, store.Q("broadcast_start"), id, audience, deliveryKind, body, actor, sourceChat, sourceMessage, carrier(ctx))
+			}
+			if err != nil {
 				return true, err
 			}
 			state = "running"

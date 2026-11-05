@@ -87,16 +87,42 @@ WHERE NOT EXISTS(SELECT 1 FROM final_confirmation_invitations i WHERE i.telegram
 SELECT EXISTS(SELECT 1 FROM survey_questions q JOIN final_confirmation_campaign c ON c.question_id=q.id
 WHERE q.id=$1 AND c.positive_option_id=$2 AND q.admission_closed_at IS NOT NULL
 AND NOT EXISTS(SELECT 1 FROM final_confirmation_invitations i WHERE i.telegram_id=$3 AND i.status='yes'));
--- name: final_pending_delivery_allowed
-SELECT NOT EXISTS(
- SELECT 1 FROM outbound_messages reminder JOIN broadcasts b ON b.id=reminder.broadcast_id
- WHERE reminder.id=$1 AND b.audience='final_pending'
-) OR EXISTS(
- SELECT 1 FROM final_confirmation_invitations i
- JOIN outbound_messages original ON original.id=i.delivery_id
- JOIN final_confirmation_invitation_eligible e ON e.telegram_id=i.telegram_id
- WHERE i.telegram_id=$2 AND i.status='invited' AND original.status='sent' AND original.telegram_message_id>0
-);
+-- name: special_broadcast_recipients
+WITH people AS (
+ SELECT u.telegram_id,a.option_id,c.positive_option_id,i.telegram_id AS invitation,i.status,
+   original.status AS delivery_status,original.telegram_message_id,
+   EXISTS(SELECT 1 FROM final_confirmation_eligible e
+     WHERE e.telegram_id=u.telegram_id AND e.question_id=c.question_id
+       AND e.option_id=c.positive_option_id AND e.registration_completed_at IS NOT NULL) AS queued,
+   EXISTS(SELECT 1 FROM outbound_messages first_message
+     WHERE first_message.chat=u.telegram_id AND first_message.status='sent'
+       AND first_message.telegram_message_id>0
+       AND (first_message.broadcast_id=q.broadcast_id OR (
+         first_message.body->>'kind'='survey_question'
+         AND first_message.body->'numbers'->>0=q.id::text))) AS first_received,
+   EXISTS(SELECT 1 FROM final_confirmation_invitation_eligible e
+     WHERE e.telegram_id=u.telegram_id) AS invitation_eligible
+ FROM users u CROSS JOIN final_confirmation_campaign c
+ JOIN survey_questions q ON q.id=c.question_id
+ LEFT JOIN survey_answers a ON a.question_id=c.question_id AND a.telegram_id=u.telegram_id
+ LEFT JOIN final_confirmation_invitations i ON i.telegram_id=u.telegram_id
+ LEFT JOIN outbound_messages original ON original.id=i.delivery_id
+ WHERE c.id=1
+   AND u.has_registered = true
+   AND u.is_blocked = 0
+   AND u.is_staff = 0
+   AND u.is_counselor = 0
+   AND ($2::bigint=0 OR u.telegram_id=$2)
+)
+SELECT telegram_id FROM people WHERE
+ ($1 IN ('final_pending','final_unanswered') AND status='invited' AND invitation_eligible
+   AND delivery_status='sent' AND telegram_message_id>0)
+ OR ($1='final_waiting' AND invitation IS NULL AND queued)
+ OR ($1='agreement_unanswered' AND invitation IS NULL AND option_id IS NULL AND first_received)
+ OR ($1='registration_waiting' AND invitation IS NULL AND (
+   (option_id IS NULL AND NOT first_received)
+   OR (option_id=positive_option_id AND NOT queued)))
+ORDER BY telegram_id;
 
 -- name: final_decline_target
 SELECT i.status,COALESCE(NULLIF(u.name,''),NULLIF(u.telegram_sername,''),u.username,''),COALESCE(o.telegram_message_id,0)

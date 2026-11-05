@@ -43,7 +43,8 @@ func (s *Service) Claim(ctx context.Context, r *pb.ClaimRequest) (*pb.Delivery, 
 		d.Id = r.Id
 		d.Lease = token()
 		var body []byte
-		err = tx.QueryRow(ctx, store.Q("claim"), r.Id, d.Lease).Scan(&d.Chat, &d.Kind, &body, &d.SourceChat, &d.SourceMessage, &d.Actor, &d.Traceparent, &d.Group, &d.EditMessageId)
+		var audience string
+		err = tx.QueryRow(ctx, store.Q("claim"), r.Id, d.Lease).Scan(&d.Chat, &d.Kind, &body, &d.SourceChat, &d.SourceMessage, &d.Actor, &d.Traceparent, &d.Group, &d.EditMessageId, &audience)
 		if errors.Is(err, pgx.ErrNoRows) {
 			d.Id = 0
 			d.Lease = ""
@@ -64,11 +65,13 @@ func (s *Service) Claim(ctx context.Context, r *pb.ClaimRequest) (*pb.Delivery, 
 					return nil, internal(err)
 				}
 			}
-			if deliverable {
+			if deliverable && specialBroadcastAudience(audience) {
 				// The audience is fixed at /send, but answers and eligibility can
 				// change while messages wait, pause or retry. Cancel before handing
 				// the payload to Telegram; other broadcasts retain their behavior.
-				err = tx.QueryRow(ctx, store.Q("final_pending_delivery_allowed"), d.Id, d.Chat).Scan(&deliverable)
+				ids, checkErr := specialBroadcastRecipients(ctx, tx, audience, d.Chat)
+				err = checkErr
+				deliverable = len(ids) > 0
 				if err != nil {
 					return nil, internal(err)
 				}

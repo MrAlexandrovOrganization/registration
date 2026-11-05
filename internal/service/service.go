@@ -377,7 +377,7 @@ func (s *Service) private(ctx context.Context, tx pgx.Tx, in *pb.Update, replies
 		if err = tx.QueryRow(ctx, store.Q("broadcast_create"), in.Actor, audience, "copy", in.Chat, in.MessageId).Scan(&id); err != nil {
 			return err
 		}
-		if err = tx.QueryRow(ctx, store.Q("audience_count"), audience).Scan(&count); err != nil {
+		if count, err = broadcastAudienceCount(ctx, tx, audience); err != nil {
 			return err
 		}
 		u.state = s.nextUser(u)

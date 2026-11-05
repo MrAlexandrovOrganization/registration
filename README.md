@@ -436,6 +436,12 @@ staff-чата и отдельный учёт отбивок; она также 
 ответившие до выдачи задания на отправку пропускаются, включая pause/retry.
 Подробности и условия — [FINAL_CONFIRMATION.md](docs/FINAL_CONFIRMATION.md#напоминание-не-ответившим).
 
+Готовые уведомления после заполнения мест: `/broadcast final_unanswered`,
+`/broadcast final_waiting`, `/broadcast agreement_unanswered`,
+`/broadcast registration_waiting`. Каждая команда сразу показывает текст и число
+получателей; отправка начинается только после `/send ID`.
+Определения групп и повторная проверка — в [FINAL_CONFIRMATION.md](docs/FINAL_CONFIRMATION.md#уведомления-об-окончании-мест).
+
 Получатели рассылки фиксируются при `/send ID`, уникальны по `(broadcast_id,chat)`.
 Kafka несёт только ID задания рассылки, ключ чата и traceparent, не содержимое анкеты.
 Publisher ждёт `acks=all`, затем отмечает публикацию. Через 30 секунд незавершённое
