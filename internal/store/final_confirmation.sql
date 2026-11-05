@@ -81,3 +81,14 @@ WHERE NOT EXISTS(SELECT 1 FROM final_confirmation_invitations i WHERE i.telegram
 -- name: final_late_positive
 SELECT EXISTS(SELECT 1 FROM survey_questions q JOIN final_confirmation_campaign c ON c.question_id=q.id
 WHERE q.id=$1 AND c.positive_option_id=$2 AND q.admission_closed_at IS NOT NULL);
+-- name: final_pending_delivery_allowed
+SELECT NOT EXISTS(
+ SELECT 1 FROM outbound_messages reminder JOIN broadcasts b ON b.id=reminder.broadcast_id
+ WHERE reminder.id=$1 AND b.audience='final_pending'
+) OR EXISTS(
+ SELECT 1 FROM final_confirmation_invitations i
+ JOIN outbound_messages original ON original.id=i.delivery_id
+ JOIN final_confirmation_eligible e ON e.telegram_id=i.telegram_id
+ JOIN final_confirmation_campaign c ON c.question_id=e.question_id AND c.positive_option_id=e.option_id
+ WHERE i.telegram_id=$2 AND i.status='invited' AND original.status='sent' AND original.telegram_message_id>0
+);

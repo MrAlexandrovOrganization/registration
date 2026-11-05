@@ -64,6 +64,15 @@ func (s *Service) Claim(ctx context.Context, r *pb.ClaimRequest) (*pb.Delivery, 
 					return nil, internal(err)
 				}
 			}
+			if deliverable {
+				// The audience is fixed at /send, but answers and eligibility can
+				// change while messages wait, pause or retry. Cancel before handing
+				// the payload to Telegram; other broadcasts retain their behavior.
+				err = tx.QueryRow(ctx, store.Q("final_pending_delivery_allowed"), d.Id, d.Chat).Scan(&deliverable)
+				if err != nil {
+					return nil, internal(err)
+				}
+			}
 			allowed := false
 			if deliverable {
 				allowed, err = s.deliveryAllowed(ctx, tx, d)

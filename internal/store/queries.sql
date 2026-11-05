@@ -87,12 +87,26 @@ SELECT count(*),count(*) FILTER(WHERE state='registered'),count(*) FILTER(WHERE 
 -- name: broadcast_create
 INSERT INTO broadcasts(actor,audience,kind,source_chat,source_message) VALUES($1,$2,$3,$4,$5) RETURNING id;
 -- name: audience_count
-SELECT count(*) FROM users WHERE is_blocked=0 AND ($1='all' OR ($1='registered' AND state='registered') OR ($1='incomplete' AND state<>'registered') OR ($1='yes' AND will_drive='Обязательно! 🤩') OR ($1='maybe' AND will_drive='Пока думаю 🤔') OR ($1='staff' AND is_staff=1) OR ($1='counselor' AND is_counselor=1) OR ($1='non_counselor' AND is_counselor=0));
+SELECT count(*) FROM users u WHERE is_blocked=0 AND ($1='all' OR ($1='registered' AND state='registered') OR ($1='incomplete' AND state<>'registered') OR ($1='yes' AND will_drive='Обязательно! 🤩') OR ($1='maybe' AND will_drive='Пока думаю 🤔') OR ($1='staff' AND is_staff=1) OR ($1='counselor' AND is_counselor=1) OR ($1='non_counselor' AND is_counselor=0)
+OR ($1='final_pending' AND EXISTS(
+ SELECT 1 FROM final_confirmation_invitations i
+ JOIN outbound_messages original ON original.id=i.delivery_id
+ JOIN final_confirmation_eligible e ON e.telegram_id=i.telegram_id
+ JOIN final_confirmation_campaign c ON c.question_id=e.question_id AND c.positive_option_id=e.option_id
+ WHERE i.telegram_id=u.telegram_id AND i.status='invited' AND original.status='sent' AND original.telegram_message_id>0
+)));
 -- name: broadcast_get
 SELECT actor,audience,kind,source_chat,source_message,status FROM broadcasts WHERE id=$1 FOR UPDATE;
 -- name: broadcast_start
 INSERT INTO outbound_messages(chat,priority,kind,body,actor,source_chat,source_message,broadcast_id,traceparent)
-SELECT telegram_id,'broadcast',$3,$4,$5,$6,$7,$1,$8 FROM users WHERE is_blocked=0 AND ($2='all' OR ($2='registered' AND state='registered') OR ($2='incomplete' AND state<>'registered') OR ($2='yes' AND will_drive='Обязательно! 🤩') OR ($2='maybe' AND will_drive='Пока думаю 🤔') OR ($2='staff' AND is_staff=1) OR ($2='counselor' AND is_counselor=1) OR ($2='non_counselor' AND is_counselor=0)) ON CONFLICT DO NOTHING;
+SELECT telegram_id,'broadcast',$3,$4,$5,$6,$7,$1,$8 FROM users u WHERE is_blocked=0 AND ($2='all' OR ($2='registered' AND state='registered') OR ($2='incomplete' AND state<>'registered') OR ($2='yes' AND will_drive='Обязательно! 🤩') OR ($2='maybe' AND will_drive='Пока думаю 🤔') OR ($2='staff' AND is_staff=1) OR ($2='counselor' AND is_counselor=1) OR ($2='non_counselor' AND is_counselor=0)
+OR ($2='final_pending' AND EXISTS(
+ SELECT 1 FROM final_confirmation_invitations i
+ JOIN outbound_messages original ON original.id=i.delivery_id
+ JOIN final_confirmation_eligible e ON e.telegram_id=i.telegram_id
+ JOIN final_confirmation_campaign c ON c.question_id=e.question_id AND c.positive_option_id=e.option_id
+ WHERE i.telegram_id=u.telegram_id AND i.status='invited' AND original.status='sent' AND original.telegram_message_id>0
+))) ON CONFLICT DO NOTHING;
 -- name: broadcast_status
 UPDATE broadcasts SET status=$2 WHERE id=$1;
 -- name: broadcast_cancel

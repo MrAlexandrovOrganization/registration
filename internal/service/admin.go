@@ -21,6 +21,10 @@ func audienceValid(v string) bool {
 	}
 	return false
 }
+func broadcastAudienceValid(v string) bool {
+	return v == "final_pending" || audienceValid(v)
+}
+
 func permissionValid(v string) bool {
 	switch v {
 	case "admin", "table_viewer", "message_sender", "staff":
@@ -231,7 +235,7 @@ func (s *Service) admin(ctx context.Context, tx pgx.Tx, in *pb.Update, u *user, 
 		if !allowed("message_sender") || u == nil {
 			return notice("denied")
 		}
-		if len(parts) != 2 || !audienceValid(parts[1]) {
+		if len(parts) != 2 || !broadcastAudienceValid(parts[1]) {
 			return notice("command_usage")
 		}
 		if !s.ParticipationEnabled && (parts[1] == "yes" || parts[1] == "maybe") {

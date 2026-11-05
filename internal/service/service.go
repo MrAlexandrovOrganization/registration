@@ -381,7 +381,7 @@ func (s *Service) private(ctx context.Context, tx pgx.Tx, in *pb.Update, replies
 		if err = replies.enqueue(ctx, tx, in.Chat, false, "copy", nil, in.Actor, in.Chat, in.MessageId); err != nil {
 			return err
 		}
-		return reply(&pb.View{Kind: "broadcast_preview", Numbers: []int64{id, count}})
+		return reply(&pb.View{Kind: "broadcast_preview", Field: audience, Numbers: []int64{id, count}})
 	}
 	if in.PhotoFileId != "" {
 		return reply(&pb.View{Kind: "notice", Code: "invalid_content"})
