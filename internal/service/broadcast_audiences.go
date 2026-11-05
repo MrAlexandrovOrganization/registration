@@ -9,7 +9,7 @@ import (
 )
 
 func specialBroadcastAudience(audience string) bool {
-	return audience == "final_pending" || closureBroadcastCode(audience) != ""
+	return audience == "final_pending" || audience == "final_confirmed" || closureBroadcastCode(audience) != ""
 }
 
 func closureBroadcastCode(audience string) string {

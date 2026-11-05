@@ -117,6 +117,7 @@ WITH people AS (
 SELECT telegram_id FROM people WHERE
  ($1 IN ('final_pending','final_unanswered') AND status='invited' AND invitation_eligible
    AND delivery_status='sent' AND telegram_message_id>0)
+ OR ($1='final_confirmed' AND status='yes')
  OR ($1='final_waiting' AND invitation IS NULL AND queued)
  OR ($1='agreement_unanswered' AND invitation IS NULL AND option_id IS NULL AND first_received)
  OR ($1='registration_waiting' AND invitation IS NULL AND (
