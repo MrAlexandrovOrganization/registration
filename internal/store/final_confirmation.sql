@@ -92,3 +92,21 @@ SELECT NOT EXISTS(
  JOIN final_confirmation_campaign c ON c.question_id=e.question_id AND c.positive_option_id=e.option_id
  WHERE i.telegram_id=$2 AND i.status='invited' AND original.status='sent' AND original.telegram_message_id>0
 );
+
+-- name: final_decline_target
+SELECT i.status,COALESCE(NULLIF(u.name,''),NULLIF(u.telegram_sername,''),u.username,''),COALESCE(o.telegram_message_id,0)
+FROM final_confirmation_invitations i JOIN users u ON u.telegram_id=i.telegram_id
+LEFT JOIN outbound_messages o ON o.id=i.delivery_id WHERE i.telegram_id=$1;
+
+-- name: final_decline_username
+SELECT telegram_id FROM users WHERE lower(ltrim(username,'@'))=lower($1) ORDER BY telegram_id LIMIT 2;
+
+-- name: final_decline_consume_preview
+UPDATE outbound_messages o SET body=jsonb_set(o.body,'{buttons}','[]'::jsonb)
+WHERE o.actor=$1 AND o.chat=$1 AND o.status='sent'
+AND o.telegram_message_id=$2 AND o.body->>'kind'='final_decline_preview'
+AND EXISTS(SELECT 1 FROM jsonb_array_elements(o.body->'buttons') b WHERE b->>'data'=$3);
+
+-- name: final_admin_decline
+UPDATE final_confirmation_invitations SET status='no',answered_at=clock_timestamp()
+WHERE telegram_id=$1 AND status=$2 AND status IN ('yes','invited');

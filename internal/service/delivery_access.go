@@ -23,6 +23,8 @@ func (s *Service) deliveryAllowed(ctx context.Context, tx pgx.Tx, d *pb.Delivery
 		permission, private = "admin", true
 	case "view":
 		switch d.View.Kind {
+		case "final_decline_preview", "final_decline_result":
+			return !d.Group && d.Chat == d.Actor && s.finalDeclineAllowed(ctx, tx, d.Actor), nil
 		case "help_participant": // Persisted by the previous implementation/migration.
 			d.View = &pb.View{Kind: "help_public"}
 		case "help", "permissions":

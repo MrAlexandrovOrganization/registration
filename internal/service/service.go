@@ -329,6 +329,9 @@ func (s *Service) private(ctx context.Context, tx pgx.Tx, in *pb.Update, replies
 			return err
 		}
 	}
+	if handled, err := s.finalDeclineCallback(ctx, tx, in, replies); handled || err != nil {
+		return err
+	}
 	if handled, err := s.finalCallback(ctx, tx, in, replies); handled || err != nil {
 		return err
 	}
