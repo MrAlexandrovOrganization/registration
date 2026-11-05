@@ -36,7 +36,7 @@ VALUES(9998,9998,'interactive','copy',1,777,
 	const snapshot = `SELECT jsonb_build_object(
 'users',(SELECT jsonb_agg(to_jsonb(u) ORDER BY telegram_id) FROM users u),
 'outbox',(SELECT jsonb_agg(to_jsonb(o) ORDER BY id) FROM outbound_messages o),
-'invitations',(SELECT jsonb_agg(to_jsonb(i) ORDER BY telegram_id) FROM final_confirmation_invitations i),
+'invitations',(SELECT jsonb_agg(to_jsonb(i)-'is_manual' ORDER BY telegram_id) FROM final_confirmation_invitations i),
 'campaign',(SELECT jsonb_agg(to_jsonb(c)-'positive_label'-'negative_label') FROM final_confirmation_campaign c),
 'drafts',(SELECT jsonb_agg(to_jsonb(d)-'positive_label'-'negative_label' ORDER BY actor) FROM final_confirmation_drafts d),
 'history',(SELECT jsonb_agg(to_jsonb(m) ORDER BY version) FROM schema_migrations m WHERE version<=8)

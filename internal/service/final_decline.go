@@ -55,7 +55,7 @@ func (s *Service) finalDeclinePreview(ctx context.Context, tx pgx.Tx, in *pb.Upd
 	var state, name string
 	var message int64
 	err = tx.QueryRow(ctx, store.Q("final_decline_target"), target).Scan(&state, &name, &message)
-	if errors.Is(err, pgx.ErrNoRows) || err == nil && state == "excluded" {
+	if errors.Is(err, pgx.ErrNoRows) || err == nil && state != "yes" && state != "invited" && state != "no" {
 		return reply("final_decline_not_active")
 	}
 	if err != nil {

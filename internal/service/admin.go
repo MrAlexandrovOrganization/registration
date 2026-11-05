@@ -63,6 +63,8 @@ func (s *Service) admin(ctx context.Context, tx pgx.Tx, in *pb.Update, u *user, 
 	}
 	allowed := func(p string) bool { return s.allowed(ctx, tx, in.Actor, p) }
 	switch cmd {
+	case "/final_more", "/final_invite":
+		return s.finalExtraPreview(ctx, tx, in, replies, parts)
 	case "/final_decline":
 		return s.finalDeclinePreview(ctx, tx, in, replies, parts)
 	case "/final_new", "/final_preview", "/final_start", "/final_status", "/final_retry":

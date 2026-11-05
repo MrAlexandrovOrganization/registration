@@ -329,6 +329,9 @@ func (s *Service) private(ctx context.Context, tx pgx.Tx, in *pb.Update, replies
 			return err
 		}
 	}
+	if handled, err := s.finalExtraCallback(ctx, tx, in, replies); handled || err != nil {
+		return err
+	}
 	if handled, err := s.finalDeclineCallback(ctx, tx, in, replies); handled || err != nil {
 		return err
 	}
@@ -512,6 +515,13 @@ func (s *Service) private(ctx context.Context, tx pgx.Tx, in *pb.Update, replies
 		}
 	}
 	v := s.view(u)
+	if completedLastField {
+		var hasSeat bool
+		if err = tx.QueryRow(ctx, store.Q("final_has_seat"), in.Actor).Scan(&hasSeat); err != nil {
+			return err
+		}
+		completedLastField = !hasSeat
+	}
 	if completedLastField {
 		// Keep the permanent reminder separate from the editable questionnaire.
 		// Completion of this send durably transitions the same job to pinning,

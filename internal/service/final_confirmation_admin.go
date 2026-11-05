@@ -280,7 +280,7 @@ func finalSummary(ctx context.Context, tx pgx.Tx, question, positive int64, code
 	if err != nil {
 		return nil, err
 	}
-	for _, state := range []string{"invited", "yes", "no", "excluded"} {
+	for _, state := range []string{"invited", "yes", "no", "excluded", "late"} {
 		v.Fields = append(v.Fields, &pb.Field{Key: "final_count_" + state, Value: number(counts[state])})
 	}
 	var failed int64

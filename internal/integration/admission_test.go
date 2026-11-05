@@ -18,6 +18,7 @@ import (
 
 func dropAdmissionSchema(f *surveyFixture) {
 	f.t.Helper()
+	dropFinalExtraSchema(f)
 	f.exec(`CREATE OR REPLACE VIEW final_confirmation_eligible AS
 SELECT u.telegram_id,u.registration_completed_at,a.question_id,a.option_id
 FROM users u JOIN survey_answers a ON a.telegram_id=u.telegram_id
@@ -218,7 +219,7 @@ func TestAdmissionMigrationPreservesActiveCampaign(t *testing.T) {
 'questions',(SELECT jsonb_agg(to_jsonb(q)-'admission_closed_at' ORDER BY id) FROM survey_questions q),
 'answers',(SELECT jsonb_agg(to_jsonb(a) ORDER BY question_id,telegram_id) FROM survey_answers a),
 'outbox',(SELECT jsonb_agg(to_jsonb(o) ORDER BY id) FROM outbound_messages o),
-'invitations',(SELECT jsonb_agg(to_jsonb(i) ORDER BY telegram_id) FROM final_confirmation_invitations i),
+'invitations',(SELECT jsonb_agg(to_jsonb(i)-'is_manual' ORDER BY telegram_id) FROM final_confirmation_invitations i),
 'campaign',(SELECT jsonb_agg(to_jsonb(c)) FROM final_confirmation_campaign c),
 'history',(SELECT jsonb_agg(to_jsonb(m) ORDER BY version) FROM schema_migrations m WHERE version<=9)
 )::text`

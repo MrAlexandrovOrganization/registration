@@ -14,6 +14,9 @@ func (s *Service) deliveryAllowed(ctx context.Context, tx pgx.Tx, d *pb.Delivery
 	private := false
 	switch d.Kind {
 	case "copy":
+		if d.View.GetKind() == "final_invites_message_preview" {
+			return !d.Group && d.Chat == d.Actor && s.finalExtraAllowed(ctx, tx, d.Actor), nil
+		}
 		if d.View.GetKind() == "final_preview" {
 			permission, private = "message_sender", true
 		}
@@ -23,6 +26,8 @@ func (s *Service) deliveryAllowed(ctx context.Context, tx pgx.Tx, d *pb.Delivery
 		permission, private = "admin", true
 	case "view":
 		switch d.View.Kind {
+		case "final_invites_preview", "final_invites_result":
+			return !d.Group && d.Chat == d.Actor && s.finalExtraAllowed(ctx, tx, d.Actor), nil
 		case "final_decline_preview", "final_decline_result":
 			return !d.Group && d.Chat == d.Actor && s.finalDeclineAllowed(ctx, tx, d.Actor), nil
 		case "help_participant": // Persisted by the previous implementation/migration.

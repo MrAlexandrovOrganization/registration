@@ -23,7 +23,8 @@ func dropFinalConfirmationSchema(t *testing.T, db *pgxpool.Pool) {
 	if db.Config().ConnConfig.Database != "registration_test" {
 		t.Fatal("requires disposable registration_test")
 	}
-	_, err := db.Exec(t.Context(), `DROP VIEW final_confirmation_eligible;
+	_, err := db.Exec(t.Context(), `DROP VIEW final_confirmation_invitation_eligible;
+DROP VIEW final_confirmation_eligible;
 DROP TABLE final_confirmation_invitations,final_confirmation_campaign,final_confirmation_drafts;
 ALTER TABLE users DROP COLUMN registration_completed_at;
 ALTER TABLE survey_questions DROP COLUMN admission_closed_at;

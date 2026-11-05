@@ -181,7 +181,7 @@ func (s *Service) surveyCallback(ctx context.Context, tx pgx.Tx, in *pb.Update, 
 	sends := *r
 	sends.sendOnly = true
 	var latePositive bool
-	if err = tx.QueryRow(ctx, store.Q("final_late_positive"), q.id, option).Scan(&latePositive); err != nil {
+	if err = tx.QueryRow(ctx, store.Q("final_late_positive"), q.id, option, in.Actor).Scan(&latePositive); err != nil {
 		return true, err
 	}
 	if latePositive {

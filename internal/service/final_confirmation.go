@@ -101,8 +101,12 @@ func (s *Service) finalCallback(ctx context.Context, tx pgx.Tx, in *pb.Update, r
 	code := "final_" + strings.TrimPrefix(in.Callback, "final:") + "_saved"
 	if !eligible {
 		code = "final_ineligible"
-	} else if _, err = tx.Exec(ctx, store.Q("final_answer"), in.Actor, strings.TrimPrefix(in.Callback, "final:")); err != nil {
-		return true, err
+	} else {
+		var saved string
+		if err = tx.QueryRow(ctx, store.Q("final_answer"), in.Actor, strings.TrimPrefix(in.Callback, "final:"), finalCapacity).Scan(&saved); err != nil {
+			return true, err
+		}
+		code = "final_" + saved + "_saved"
 	}
 	if err = fillFinalConfirmations(ctx, tx); err != nil {
 		return true, err

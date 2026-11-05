@@ -20,6 +20,11 @@ func FinalConfirmationAnswer(state, positiveLabel, negativeLabel string) string 
 		return "Нет"
 	case "excluded":
 		return "Исключён из очереди"
+	case "late":
+		if positiveLabel == "" {
+			positiveLabel = "Да"
+		}
+		return positiveLabel + " — мест нет"
 	}
 	return ""
 }

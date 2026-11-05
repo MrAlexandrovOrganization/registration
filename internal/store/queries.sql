@@ -91,8 +91,7 @@ SELECT count(*) FROM users u WHERE is_blocked=0 AND ($1='all' OR ($1='registered
 OR ($1='final_pending' AND EXISTS(
  SELECT 1 FROM final_confirmation_invitations i
  JOIN outbound_messages original ON original.id=i.delivery_id
- JOIN final_confirmation_eligible e ON e.telegram_id=i.telegram_id
- JOIN final_confirmation_campaign c ON c.question_id=e.question_id AND c.positive_option_id=e.option_id
+ JOIN final_confirmation_invitation_eligible e ON e.telegram_id=i.telegram_id
  WHERE i.telegram_id=u.telegram_id AND i.status='invited' AND original.status='sent' AND original.telegram_message_id>0
 )));
 -- name: broadcast_get
@@ -103,8 +102,7 @@ SELECT telegram_id,'broadcast',$3,$4,$5,$6,$7,$1,$8 FROM users u WHERE is_blocke
 OR ($2='final_pending' AND EXISTS(
  SELECT 1 FROM final_confirmation_invitations i
  JOIN outbound_messages original ON original.id=i.delivery_id
- JOIN final_confirmation_eligible e ON e.telegram_id=i.telegram_id
- JOIN final_confirmation_campaign c ON c.question_id=e.question_id AND c.positive_option_id=e.option_id
+ JOIN final_confirmation_invitation_eligible e ON e.telegram_id=i.telegram_id
  WHERE i.telegram_id=u.telegram_id AND i.status='invited' AND original.status='sent' AND original.telegram_message_id>0
 ))) ON CONFLICT DO NOTHING;
 -- name: broadcast_status

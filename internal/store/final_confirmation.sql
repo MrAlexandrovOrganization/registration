@@ -38,8 +38,7 @@ SELECT count(*) FROM final_confirmation_invitations WHERE status IN ('invited','
 -- name: final_exclude
 UPDATE final_confirmation_invitations i SET status='excluded'
 WHERE i.status='invited' AND NOT EXISTS(
- SELECT 1 FROM final_confirmation_eligible e CROSS JOIN final_confirmation_campaign c
- WHERE c.id=1 AND e.telegram_id=i.telegram_id AND e.question_id=c.question_id AND e.option_id=c.positive_option_id
+ SELECT 1 FROM final_confirmation_invitation_eligible e WHERE e.telegram_id=i.telegram_id
 );
 -- name: final_invite
 INSERT INTO final_confirmation_invitations(telegram_id) VALUES($1);
@@ -50,11 +49,17 @@ VALUES($1,'interactive','copy',$2,$1,$3,$4,$5) RETURNING id;
 UPDATE final_confirmation_invitations SET delivery_id=$2 WHERE telegram_id=$1;
 -- name: final_invitation
 SELECT status,EXISTS(
- SELECT 1 FROM final_confirmation_eligible e CROSS JOIN final_confirmation_campaign c
- WHERE c.id=1 AND e.telegram_id=i.telegram_id AND e.question_id=c.question_id AND e.option_id=c.positive_option_id
+ SELECT 1 FROM final_confirmation_invitation_eligible e WHERE e.telegram_id=i.telegram_id
 ) FROM final_confirmation_invitations i WHERE telegram_id=$1;
 -- name: final_answer
-UPDATE final_confirmation_invitations SET status=$2,answered_at=now() WHERE telegram_id=$1 AND status='invited';
+UPDATE final_confirmation_invitations SET status=CASE
+ WHEN $2='yes' AND (SELECT count(*) FROM final_confirmation_invitations WHERE status='yes') >= $3 THEN 'late'
+ ELSE $2 END,answered_at=clock_timestamp()
+WHERE telegram_id=$1 AND status='invited' RETURNING status;
+-- name: final_accepted
+SELECT count(*) FROM final_confirmation_invitations WHERE status='yes';
+-- name: final_has_seat
+SELECT EXISTS(SELECT 1 FROM final_confirmation_invitations WHERE telegram_id=$1 AND status='yes');
 -- name: final_counts
 SELECT status,count(*) FROM final_confirmation_invitations GROUP BY status ORDER BY status;
 -- name: final_failures
@@ -80,7 +85,8 @@ ON c.question_id=e.question_id AND c.positive_option_id=e.option_id
 WHERE NOT EXISTS(SELECT 1 FROM final_confirmation_invitations i WHERE i.telegram_id=e.telegram_id);
 -- name: final_late_positive
 SELECT EXISTS(SELECT 1 FROM survey_questions q JOIN final_confirmation_campaign c ON c.question_id=q.id
-WHERE q.id=$1 AND c.positive_option_id=$2 AND q.admission_closed_at IS NOT NULL);
+WHERE q.id=$1 AND c.positive_option_id=$2 AND q.admission_closed_at IS NOT NULL
+AND NOT EXISTS(SELECT 1 FROM final_confirmation_invitations i WHERE i.telegram_id=$3 AND i.status='yes'));
 -- name: final_pending_delivery_allowed
 SELECT NOT EXISTS(
  SELECT 1 FROM outbound_messages reminder JOIN broadcasts b ON b.id=reminder.broadcast_id
@@ -88,8 +94,7 @@ SELECT NOT EXISTS(
 ) OR EXISTS(
  SELECT 1 FROM final_confirmation_invitations i
  JOIN outbound_messages original ON original.id=i.delivery_id
- JOIN final_confirmation_eligible e ON e.telegram_id=i.telegram_id
- JOIN final_confirmation_campaign c ON c.question_id=e.question_id AND c.positive_option_id=e.option_id
+ JOIN final_confirmation_invitation_eligible e ON e.telegram_id=i.telegram_id
  WHERE i.telegram_id=$2 AND i.status='invited' AND original.status='sent' AND original.telegram_message_id>0
 );
 
@@ -110,3 +115,21 @@ AND EXISTS(SELECT 1 FROM jsonb_array_elements(o.body->'buttons') b WHERE b->>'da
 -- name: final_admin_decline
 UPDATE final_confirmation_invitations SET status='no',answered_at=clock_timestamp()
 WHERE telegram_id=$1 AND status=$2 AND status IN ('yes','invited');
+-- name: final_extra_target
+SELECT COALESCE(i.status,''),COALESCE(NULLIF(u.name,''),NULLIF(u.telegram_sername,''),u.username,''),
+ u.has_registered=true AND u.is_blocked=0 AND u.is_staff=0 AND u.is_counselor=0
+FROM users u LEFT JOIN final_confirmation_invitations i ON i.telegram_id=u.telegram_id WHERE u.telegram_id=$1;
+-- name: final_extra_invite
+INSERT INTO final_confirmation_invitations(telegram_id,is_manual)
+SELECT u.telegram_id,$2 FROM users u WHERE u.telegram_id=$1
+ AND u.has_registered=true AND u.is_blocked=0 AND u.is_staff=0 AND u.is_counselor=0
+ AND ($2 OR EXISTS(SELECT 1 FROM final_confirmation_eligible e JOIN final_confirmation_campaign c
+ ON c.question_id=e.question_id AND c.positive_option_id=e.option_id
+ WHERE e.telegram_id=u.telegram_id AND e.registration_completed_at IS NOT NULL))
+ON CONFLICT(telegram_id) DO NOTHING RETURNING telegram_id;
+-- name: final_extra_consume_preview
+UPDATE outbound_messages o SET body=jsonb_set(o.body,'{buttons}','[]'::jsonb)
+WHERE o.actor=$1 AND o.chat=$1 AND o.status='sent' AND o.telegram_message_id=$2
+AND o.body->>'kind'='final_invites_preview'
+AND EXISTS(SELECT 1 FROM jsonb_array_elements(o.body->'buttons') b WHERE b->>'data'=$3)
+RETURNING o.body;

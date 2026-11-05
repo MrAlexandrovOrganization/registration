@@ -638,7 +638,7 @@ func TestSurveyUpgradeFromDeployedV5(t *testing.T) {
 	}
 	var version, history int
 	f.must(f.db.QueryRow(f.ctx, "SELECT max(version),count(*) FROM schema_migrations").Scan(&version, &history))
-	if version != 10 || history != 10 {
+	if version != 11 || history != 11 {
 		t.Fatal("expected complete migration history", version, history)
 	}
 	q := f.create("Photo in one migration", true)
