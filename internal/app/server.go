@@ -126,7 +126,11 @@ func Serve(ctx context.Context, c Config) error {
 			(&sheets.Worker{Service: svc, Writer: sheetsClient, Interval: c.SheetsInterval, Attempts: attempts, LastSuccess: success}).Run(run)
 		})
 	}
-	writer := &kafka.Writer{Addr: kafka.TCP(c.Brokers...), Balancer: &kafka.Hash{}, RequiredAcks: kafka.RequireAll, Async: false, WriteTimeout: 5 * time.Second, ReadTimeout: 5 * time.Second, MaxAttempts: 3, AllowAutoTopicCreation: false}
+	// This outbox publishes to one topic. Cluster-wide metadata discovery can
+	// delay its delivery behind unrelated topics and oversized metadata responses.
+	transport := &kafka.Transport{MetadataTopics: []string{c.TopicPrefix + ".broadcast.v1"}}
+	defer transport.CloseIdleConnections()
+	writer := &kafka.Writer{Addr: kafka.TCP(c.Brokers...), Balancer: &kafka.Hash{}, RequiredAcks: kafka.RequireAll, Async: false, WriteTimeout: 5 * time.Second, ReadTimeout: 5 * time.Second, MaxAttempts: 3, AllowAutoTopicCreation: false, Transport: transport}
 	workers.Go(func() {
 		defer writer.Close()
 		(&queue.Publisher{DB: db, Writer: writer, Prefix: c.TopicPrefix}).Run(run)

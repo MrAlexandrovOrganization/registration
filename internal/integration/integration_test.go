@@ -409,7 +409,9 @@ func TestSystem(t *testing.T) {
 	send(101, "/poll registered", "")
 	send(101, "/send 3", "")
 	must(db.QueryRow(ctx, "SELECT id FROM outbound_messages WHERE broadcast_id=3").Scan(&job))
-	writer := &kafka.Writer{Addr: kafka.TCP(broker), Balancer: &kafka.Hash{}, RequiredAcks: kafka.RequireAll, WriteTimeout: 5 * time.Second}
+	transport := &kafka.Transport{MetadataTopics: []string{"registration.fixture.broadcast.v1"}}
+	defer transport.CloseIdleConnections()
+	writer := &kafka.Writer{Addr: kafka.TCP(broker), Balancer: &kafka.Hash{}, RequiredAcks: kafka.RequireAll, WriteTimeout: 5 * time.Second, Transport: transport}
 	defer writer.Close()
 	publisher := &queue.Publisher{DB: db, Writer: writer, Prefix: "registration.fixture"}
 	call, stop := context.WithTimeout(ctx, 20*time.Second)
