@@ -1,0 +1,11 @@
+[
+  {
+    "targets": [
+      "registration-backend:9095"
+    ],
+    "labels": {
+      "project": "registration",
+      "service": "registration-backend"
+    }
+  }
+]

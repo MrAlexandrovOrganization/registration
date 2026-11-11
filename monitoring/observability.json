@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "service": "registration",
+  "components": [
+    "registration/*",
+    "registration-local/*"
+  ],
+  "logs": [],
+  "assets": [
+    {
+      "kind": "metrics",
+      "file": "monitoring/prometheus/targets.json",
+      "destination": "registration.yml",
+      "adopt_sha256": [
+        "81d947b67f8d4501f37256a4fb64b258d49e1c364a596a93f1e33c0d77f67ad2"
+      ],
+      "location": "local"
+    }
+  ]
+}

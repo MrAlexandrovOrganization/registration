@@ -1,3 +1,5 @@
+# Vendored contract is byte-for-byte pinned by monitoring/tool.lock.json.
+exclude: ^tools/observability/
 repos:
   - repo: local
     hooks:
